@@ -45,7 +45,9 @@ constructor defaults. Tuning only inside ``run_case_part1.py`` will pass your
 own runs but fail the checks.
 """
 import numpy as np
-
+import pickle
+from importlib.resources import files
+from simulation.utils import Rz, wrap_angle_pi
 
 class DPController:
     """
@@ -56,23 +58,77 @@ class DPController:
     """
 
     def __init__(self, *args, **kwargs):
+        pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
+        with open(str(pkl), "rb") as f:
+            data = pickle.load(f)
+
+        M_RB, M_A = data["Mrb"], data["Ma"]
+        M = M_RB + M_A
+        # Surge: PI controller -- 2nd-order closed-loop system
+        self.wn_u = 0.5; # Closed-loop natural frequency in surge
+        self.kp_x = M[0,0] * 2 * self.wn_u # M11 * u_dot + kp_u * u + ki_u int(u) ) = 0
+        self.ki_x = M[0,0] * self.wn_u**2 # u_dot + 2 * zeta * wn_u * u + wn_u^2 * int(u) = 0
+        self.kp_y = M[1, 1] * 2 * self.wn_u
+        self.ki_y = M[1, 1] * self.wn_u**2
+        self.z_x = 0
+        self.z_y = 0
+
+        # Yaw: PID controller -- SISO PID pole-placement, Algorithm 15.1
+        self.wn_psi = 0.5; # Closed-loop natural frequency in yaw
+        self.kp_psi = M[2,2] * self.wn_psi**2
+        self.kd_psi = M[2,2] * 2 * self.wn_psi
+        self.ki_psi = (self.wn_psi / 10) * self.kp_psi
+        self.z_psi = 0
         pass
 
     def reset(self) -> None:
-        """Optional: reset internal states (integrators, filters) before a run."""
+        self.z_x = 0.0
+        self.z_y = 0.0
+        self.z_psi = 0.0
         pass
 
     def compute(
         self,
         t: float,
         dt: float,
-        eta: np.ndarray,
-        nu: np.ndarray,
+        eta: np.ndarray, #Position/attitude	[N, E, z, phi, theta, psi]	NED
+        nu: np.ndarray, #Velocity [u, v, w, p, q, r]	BODY
         eta_ref: np.ndarray,
         nu_ref: np.ndarray | None = None,
         acc_ref: np.ndarray | None = None,
     ) -> np.ndarray:
-        # TODO: Replace this placeholder with your DP controller.
-        # Return the (6,) desired BODY wrench — fill in tau_d[0] = Fx,
-        # tau_d[1] = Fy, tau_d[5] = Mz and leave the rest zero.
-        return np.zeros(6)
+        if nu_ref is None: 
+            nu_ref = np.zeros(6)
+        
+        # Change NED errors to body frame
+        e_pos_ned = np.array([
+            eta_ref[0] - eta[0],
+            eta_ref[1] - eta[1],
+            0.0
+        ])
+        J = Rz(eta[5])
+        e_pos_body = J.T @ e_pos_ned
+
+        # Velocity errors
+        e_x = e_pos_body[0]
+        e_y = e_pos_body[1]
+
+        # Yaw error
+        e_psi = wrap_angle_pi(eta_ref[5] - eta[5])  
+        # Surge: PI speed controller
+        Fx = -self.kp_x * e_x - self.ki_x * self.z_x
+        Fy = -self.kp_y * e_y - self.ki_y * self.z_y
+
+        # Yaw: PID controller
+        Mz = -self.kp_psi * e_psi - self.kd_psi * nu[5] - self.ki_psi * self.z_psi
+
+        # Euler's method (k+1)
+        self.z_x += dt * e_x; # Forward position tracking error
+        self.z_y += dt * e_y; # Sideways position tracking error
+        self.z_psi += dt * e_psi; # Heading angle tracking error
+        # Return computed tau_d
+        tau_d = np.zeros(6)
+        tau_d[0] = Fx
+        tau_d[1] = Fy
+        tau_d[5] = Mz
+        return tau_d
