@@ -93,6 +93,9 @@ class Wind:
         self.tau_slow = float(tau_slow)
         self.seed = seed
 
+        # Wind Coefficient Vector
+        Cx = eta()
+
     def step(
         self,
         t: float,
@@ -101,7 +104,18 @@ class Wind:
         nu: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, float]]:
         # TODO: Replace this placeholder with your wind load model.
+
+        # Wind Coefficient vector
+        Cx_n = self.mean_speed * np.sin(ssa(self.beta + np.pi))
+        Cy_n = self.mean_speed * np.cos(self.beta + np.pi)
+
+
+        tau_w6 = nu**2 @ self
         # Default: no wind loads.
         tau_w6 = np.zeros(6)
         info = {"U": 0.0, "beta_ned": 0.0, "alpha_body": 0.0}
         return tau_w6, info
+
+# Smallest sign angle
+def ssa(angle):
+    return np.mod(angle + np.pi, 2 * np.pi) - np.pi
