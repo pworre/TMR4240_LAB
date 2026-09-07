@@ -15,7 +15,7 @@ import numpy as np
 
 from part_1.config import SimConfig, default_thrusters_gunnerus3
 from simulation.simulation_part_1 import DPSimulator3DOF
-from simulation.plotter import plot_dashboard, plot_time_histories
+from simulation.plotter import plot_dashboard, plot_time_histories, plot_current, plot_wind
 from part_1.controller import DPController
 from part_1.reference import ReferenceModel
 from part_1.current import Current
@@ -53,8 +53,9 @@ def main():
     # Students may replace eta_cmd with a time series of shape (N_steps, 6).
 
     # 5) Define environment models (default: calm water)
-    current = Current()
-    wind = Wind()
+    #current = Current()
+    current = Current(speed=5, beta=0, semantics="towards", beta_end=-np.pi/2, duration=200)
+    wind = Wind(mean_speed=10, beta=np.pi/4, semantics="from", sigma_slow=0)
 
     # Simulation 1a from the project description — station keeping at the
     # origin in a 0.5 m/s current from east, no wind. Once your subsystems
@@ -71,6 +72,8 @@ def main():
     # plot_wrench, plot_current, plot_wind.
     plot_dashboard(logs)
     plot_time_histories(logs)
+    plot_current(logs)
+    plot_wind(logs)
     plt.show()
 
     # Confirmation
