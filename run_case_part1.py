@@ -22,8 +22,6 @@ from part_1.current import Current
 from part_1.wind import Wind
 
 
-
-
 def main():
     # 1) Simulation clock and options
     cfg = SimConfig(dt=0.05, T=300.0, method="Euler", use_reference=True)
