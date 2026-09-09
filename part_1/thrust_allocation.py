@@ -25,7 +25,6 @@ Students may implement, for example:
     - optimization-based allocation,
     - power-minimizing allocation.
 """
-from dbm import error
 from typing import List, Optional, Tuple
 import numpy as np
 from scipy.optimize import minimize
