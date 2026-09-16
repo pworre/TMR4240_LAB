@@ -69,9 +69,9 @@ class ThrustAllocator:
 
         
         #weights for the cost function:
-        Q=np.identity(3) #error penalty
+        Q=np.diag([100,100,500]) #error penalty
         R = np.diag([
-            12.0 / self.thrusters[0].u_max**2,
+            10.0 / self.thrusters[0].u_max**2,
             1.0 / self.thrusters[1].u_max**2,
             1.0 / self.thrusters[1].u_max**2,
             1.0 / self.thrusters[2].u_max**2,
@@ -91,7 +91,7 @@ class ThrustAllocator:
             Fx2_now = u_now[2] * np.cos(alpha_now[2])
             Fy2_now = u_now[2] * np.sin(alpha_now[2])
 
-        z0 = np.array([u_now[0]-10, Fx1_now, Fy1_now, Fx2_now, Fy2_now])
+        z0 = np.array([u_now[0], Fx1_now, Fy1_now, Fx2_now, Fy2_now])
         #print("z0:", z0)
 
         #building the cost function:
@@ -122,17 +122,18 @@ class ThrustAllocator:
             raise RuntimeError(
                 f"Thruster allocation failed: {result.message}"
             )'''
-        if not result.success:
-            print(f"Allocator warning: {result.message}")
         #print("message:", result.message)
         #print("z:", result.x)
         #print("cost:", result.fun)
-
+        if result.success:
+            print("Allocator success")
+            z = result.x
+        else:
+            print(f"Allocator warning: {result.message}")
+            z = z0
         
-
-        z = result.x
+        print("vector:", z)
         u_T = z[0]
-
         FxA1, FyA1 = z[1], z[2]
         FxA2, FyA2 = z[3], z[4]
 
