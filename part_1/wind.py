@@ -92,6 +92,12 @@ class Wind:
         self.sigma_slow = float(sigma_slow)
         self.tau_slow = float(tau_slow)
         self.seed = seed
+        self.U_slow = 0.0
+
+        # Semantics
+        if self.semantics == "from":
+            self.beta = (self.beta + np.pi) % (2*np.pi)
+
 
     def step(
         self,
@@ -101,7 +107,49 @@ class Wind:
         nu: np.ndarray,
     ) -> Tuple[np.ndarray, Dict[str, float]]:
         # TODO: Replace this placeholder with your wind load model.
-        # Default: no wind loads.
+
+        psi = eta[5]
+
+        # Slowly varying wind
+        w = np.random.normal(0, 1)
+        self.U_slow += (-self.U_slow / self.tau_slow * dt + np.sqrt(2*self.sigma_slow**2 / self.tau_slow * dt) * w)
+        U_w = self.mean_speed * self.U_slow
+
+        # Wind components in NED
+        V_w = np.array([
+            [U_w * np.cos(self.beta)],
+            [U_w * np.sin(self.beta)]
+        ])
+
+        # Relative wind
+        V_rw = np.zeros((2,1))
+        R_ned_to_body = np.array([
+            [np.cos(psi), np.sin(psi)],
+            [-np.sin(psi), np.cos(psi)]
+        ])
+        V_rw_body = R_ned_to_body @ V_w
+        V_rw = V_rw_body - nu[:2].reshape(2,1)
+        U_rw = np.sqrt(V_rw[0,0]**2 + V_rw[1,0]**2)
+
+        # Wind coefficient table
+        alpha_rw = np.arctan2(V_rw[1,0], V_rw[0,0])
+        alpha_rw = alpha_rw % (2*np.pi)
+
+        # Find index
+        alpha_rw_deg = np.rad2deg(alpha_rw)
+
+        alpha_deg, C6 = load_wind_coefficients()
+        C_w = np.array([
+            np.interp(alpha_rw_deg, alpha_deg, C6[:, i])
+            for i in range(6)
+        ])
+
         tau_w6 = np.zeros(6)
-        info = {"U": 0.0, "beta_ned": 0.0, "alpha_body": 0.0}
+        tau_w6 = U_rw**2 * C_w
+
+        info = {"U": U_rw, "beta_ned": self.beta, "alpha_body": alpha_rw}
         return tau_w6, info
+
+# Smallest sign angle
+def ssa(angle):
+    return np.mod(angle + np.pi, 2 * np.pi) - np.pi
