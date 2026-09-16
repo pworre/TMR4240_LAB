@@ -158,5 +158,4 @@ class DPController:
         tau_d[0] = Fx
         tau_d[1] = Fy
         tau_d[5] = Mz
-        print(tau_d)
         return tau_d
