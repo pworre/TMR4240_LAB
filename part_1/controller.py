@@ -69,12 +69,12 @@ class DPController:
         D_diag = np.diag(Dl)[:3]
 
         # Model parameters
-        self.wn = 1/20 * 2*np.pi; # Closed-loop natural frequency [rad/s]
+        self.wn = np.array([1/20 * 2*np.pi, 1/15 * 2*np.pi, 1/15 * 2*np.pi]); # Closed-loop natural frequency [rad/s]
         self.zeta = 1.0           # Closed-loop damping factor
 
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
-        self.Kd = 2 * self.zeta * self.wn * M_diag - D_diag
+        self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
         self.Ki = self.wn / 10 * self.Kp
 
         # Integral states
@@ -120,11 +120,6 @@ class DPController:
         e_pos_body = J.T @ e_eta_ned
         nu_ref_body = J.T @ nu_ref_ned
 
-        nu_ref_3dof = np.array([
-            nu_ref_body[0],
-            nu_ref_body[1],
-            nu_ref[5],
-        ])
         # Yaw error
         e_psi = wrap_angle_pi(eta_ref[5] - eta[5])  
 
@@ -138,7 +133,7 @@ class DPController:
             nu_ref_body[1] - nu[1],
             nu_ref[5] - nu[5]
         ])
-        e_int = np.array([
+        e_int = J.T @ np.array([
             self.int_ned[0],
             self.int_ned[1],
             self.int_psi
