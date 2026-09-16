@@ -59,7 +59,8 @@ class Current:
         # Semantics
         if self.semantics == "from":
             self.beta = (self.beta + np.pi) % (2*np.pi)
-            self.beta_end = (self.beta_end + np.pi) % (2*np.pi)
+            if self.beta_end != None:
+                self.beta_end = (self.beta_end + np.pi) % (2*np.pi)
 
     def step(
         self,
