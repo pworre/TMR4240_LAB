@@ -26,6 +26,7 @@ Students may implement, for example:
     - power-minimizing allocation.
 """
 from typing import List, Optional, Tuple
+from unittest import result
 import numpy as np
 from scipy.optimize import minimize
 from models.thruster_dynamics import ThrusterConfig
@@ -69,22 +70,29 @@ class ThrustAllocator:
         
         #weights for the cost function:
         Q=np.identity(3) #error penalty
-        R=np.identity(5)/100 #actuator usage penalty
+        R = np.diag([
+            12.0 / self.thrusters[0].u_max**2,
+            1.0 / self.thrusters[1].u_max**2,
+            1.0 / self.thrusters[1].u_max**2,
+            1.0 / self.thrusters[2].u_max**2,
+            1.0 / self.thrusters[2].u_max**2,
+        ])
 
-        '''
-        Fx1_now = u_now[1] * np.cos(alpha_now[1])
-        Fy1_now = u_now[1] * np.sin(alpha_now[1])
+        if u_now is None and alpha_now is None:
+            u_now[0] = 0
+            Fx1_now = 0
+            Fy1_now = 0
+            Fx2_now = 0
+            Fy2_now = 0
+        else:
+            Fx1_now = u_now[1] * np.cos(alpha_now[1])
+            Fy1_now = u_now[1] * np.sin(alpha_now[1])
+            
+            Fx2_now = u_now[2] * np.cos(alpha_now[2])
+            Fy2_now = u_now[2] * np.sin(alpha_now[2])
 
-        Fx2_now = u_now[2] * np.cos(alpha_now[2])
-        Fy2_now = u_now[2] * np.sin(alpha_now[2])
-        '''
-        #for now:
-        u_now[0] = 0
-        Fx1_now = 0
-        Fy1_now = 0
-        Fx2_now = 0
-        Fy2_now = 0
-        z = np.array([u_now[0], Fx1_now, Fy1_now, Fx2_now, Fy2_now])
+        z0 = np.array([u_now[0]-10, Fx1_now, Fy1_now, Fx2_now, Fy2_now])
+        #print("z0:", z0)
 
         #building the cost function:
         def cost(z): #3x5 5x1 - 3x1
@@ -95,24 +103,31 @@ class ThrustAllocator:
         #TODO: Implement azimuth slewing constraints
         #TODO: Implement rate-aware allocation:
         constraints = [
-            {'type': 'ineq', 'fun': lambda z: self.thrusters[0].u_max - np.abs(z[0])},  # tunnel thruster
-            {'type': 'ineq', 'fun': lambda z: self.thrusters[1].u_max - np.sqrt(z[1]**2 + z[2]**2)},  # azimuth thruster 1
-            {'type': 'ineq', 'fun': lambda z: self.thrusters[2].u_max - np.sqrt(z[3]**2 + z[4]**2)},  # azimuth thruster 2
-            
+            {'type': 'ineq', 'fun': lambda z: self.thrusters[0].u_max - z[0]},  # tunnel thruster
+            {'type': 'ineq', 'fun': lambda z: self.thrusters[0].u_max + z[0]},
+            {'type': 'ineq', 'fun': lambda z: self.thrusters[1].u_max**2 - z[1]**2 - z[2]**2},  # azimuth thruster 1
+            {'type': 'ineq', 'fun': lambda z: self.thrusters[2].u_max**2 - z[3]**2 - z[4]**2}  # azimuth thruster 2       
         ]
+
         #solve:
         if u_now is None and alpha_now is None:
             u_now = np.zeros(n)
             alpha_now = np.zeros(n)
-        #TODO: to transform the azimuth thruster forces to the linearized forces:    
-        result=minimize(cost, z, constraints=constraints, options={
+        result=minimize(cost, z0, method='SLSQP', constraints=constraints, options={
             'ftol': 1e-8,
-            'maxiter': 2000
+            'maxiter': 2000,
+            'disp': True
         })
-        if not result.success:
+        '''if not result.success:
             raise RuntimeError(
                 f"Thruster allocation failed: {result.message}"
-            )
+            )'''
+        if not result.success:
+            print(f"Allocator warning: {result.message}")
+        #print("message:", result.message)
+        #print("z:", result.x)
+        #print("cost:", result.fun)
+
         
 
         z = result.x
@@ -136,5 +151,8 @@ class ThrustAllocator:
 
         u_cmd = [u_T, u_1, u_2]
         alpha_cmd = [np.pi / 2, a_1, a_2]
+
+        u_now = u_cmd
+        alpha_now = alpha_cmd
 
         return u_cmd, alpha_cmd
