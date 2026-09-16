@@ -76,8 +76,9 @@ class DPController:
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
         self.Ki = self.wn / 10 * self.Kp
+        self.Ki = np.zeros((3, 3))
 
-        # Integral states
+        # Integral states 
         self.int_ned = np.zeros(2)
         self.int_psi = 0.0
 
