@@ -70,7 +70,7 @@ class DPController:
 
         # Model parameters
         self.wn = np.array([1/20 * 2*np.pi, 1/15 * 2*np.pi, 1/15 * 2*np.pi]); # Closed-loop natural frequency [rad/s]
-        self.zeta = 1.0           # Closed-loop damping factor
+        self.zeta = 0.7           # Closed-loop damping factor
 
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
@@ -78,13 +78,18 @@ class DPController:
         self.Ki = self.wn / 10 * self.Kp
 
         # Integral states
-        self.int_ned = [0, 0]
-        self.int_psi = 0
+        self.int_ned = np.zeros(2)
+        self.int_psi = 0.0
+
+        # Anti-windup states
+        self.Kaw = np.array([1.0, 1.0, 1.0])
+        self.last_tau_cmd = np.zeros(6)
         pass
 
     def reset(self) -> None:
-        self.int_ned = [0, 0]
-        self.int_psi = 0
+        self.int_ned = np.zeros(2)
+        self.int_psi = 0.0
+        self.last_tau_cmd = np.zeros(6)
         pass
 
     def compute(
@@ -112,14 +117,17 @@ class DPController:
             nu_ref[1],
             0.0,
         ])
-
-        nu_ref_body = Rz(eta[5]).T @ nu_ref_ned
+        int_ned = np.array([
+            self.int_ned[0],
+            self.int_ned[1],
+            0.0
+        ])
 
         # Rotate NED fram to body frame
         J = Rz(eta[5])
         e_pos_body = J.T @ e_eta_ned
         nu_ref_body = J.T @ nu_ref_ned
-
+        int_body = J.T @ int_ned
         # Yaw error
         e_psi = wrap_angle_pi(eta_ref[5] - eta[5])  
 
@@ -133,9 +141,10 @@ class DPController:
             nu_ref_body[1] - nu[1],
             nu_ref[5] - nu[5]
         ])
-        e_int = J.T @ np.array([
-            self.int_ned[0],
-            self.int_ned[1],
+
+        e_int = np.array([
+            int_body[0],
+            int_body[1],
             self.int_psi
         ])
 
@@ -153,4 +162,44 @@ class DPController:
         tau_d[0] = Fx
         tau_d[1] = Fy
         tau_d[5] = Mz
+
+        self.last_tau_cmd = tau_d.copy()
         return tau_d
+
+    def apply_external_aw(
+        self,
+        tau_applied: np.ndarray,
+        psi: float,
+        dt: float
+    ) -> None:
+        """
+        Back-calculation anti-windup.
+
+        tau_applied is the actual BODY wrench after allocation and
+        actuator saturation.
+
+        The difference between the applied and commanded wrench
+        is fed back into the integral states.
+        """
+
+        # Commanded and applied force/moment
+        tau_cmd = self.last_tau_cmd
+
+        # Saturation/allocation error
+        aw_error = tau_applied - tau_cmd
+
+        # BODY -> NED rotation
+        J = Rz(psi)
+
+        # Translational anti-windup correction
+        aw_body_xy = aw_error[:2]
+        aw_ned_xy = J[:2, :2] @ aw_body_xy
+
+        self.int_ned += (
+            self.Kaw[:2] * aw_ned_xy * dt
+        )
+
+        # Yaw anti-windup correction
+        self.int_psi += (
+            self.Kaw[2] * aw_error[5] * dt
+        )
