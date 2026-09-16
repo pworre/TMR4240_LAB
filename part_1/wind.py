@@ -94,6 +94,8 @@ class Wind:
         self.seed = seed
         self.U_slow = 0.0
 
+        self.random_generator = np.random.default_rng(seed)
+
         # Semantics
         if self.semantics == "from":
             self.beta = (self.beta + np.pi) % (2*np.pi)
@@ -111,9 +113,9 @@ class Wind:
         psi = eta[5]
 
         # Slowly varying wind
-        w = np.random.normal(0, 1)
+        w = self.random_generator.normal(0,1)
         self.U_slow += (-self.U_slow / self.tau_slow * dt + np.sqrt(2*self.sigma_slow**2 / self.tau_slow * dt) * w)
-        U_w = self.mean_speed * self.U_slow
+        U_w = self.mean_speed + self.U_slow
 
         # Wind components in NED
         V_w = np.array([
