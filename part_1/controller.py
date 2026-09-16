@@ -74,7 +74,7 @@ class DPController:
 
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
-        self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
+        self.Kd = 2 * self.zeta * self.wn * M_diag - D_diag
         self.Ki = self.wn / 10 * self.Kp
 
         # Integral states
