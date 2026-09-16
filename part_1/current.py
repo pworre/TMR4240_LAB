@@ -56,6 +56,12 @@ class Current:
         self.beta_end = beta_end
         self.duration = float(duration)
 
+        # Semantics
+        if self.semantics == "from":
+            self.beta = (self.beta + np.pi) % (2*np.pi)
+            if self.beta_end != None:
+                self.beta_end = (self.beta_end + np.pi) % (2*np.pi)
+
     def step(
         self,
         t: float,
@@ -64,5 +70,20 @@ class Current:
         nu: np.ndarray,
     ) -> np.ndarray:
         # TODO: Replace this placeholder with your current model.
-        # Default: no current.
-        return np.zeros(6)
+        nu_c_ned = np.zeros((6,1))
+
+        # Linear varying direction
+        # beta_v : direction term with linear change given input
+        if self.beta_end is not None and self.duration > 0.0:
+            delta_beta = self.beta_end - self.beta
+            if t <= self.duration:
+                beta_v = self.beta + (t/self.duration)*delta_beta
+            else:
+                beta_v = self.beta_end
+        else:
+            beta_v = self.beta
+
+        nu_c_ned[0] = self.speed * np.cos(beta_v)
+        nu_c_ned[1] = self.speed * np.sin(beta_v)
+        
+        return nu_c_ned
