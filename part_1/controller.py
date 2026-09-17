@@ -68,30 +68,35 @@ class DPController:
         M_diag = np.diag(M)[:3]
         D_diag = np.diag(Dl)[:3]
 
-        # Model parameters
-        self.wn = np.array([1/20 * 2*np.pi, 1/15 * 2*np.pi, 1/15 * 2*np.pi]); # Closed-loop natural frequency [rad/s]
-        self.zeta = 0.7           # Closed-loop damping factor
+        # Closed-loop natural frequency [rad/s]
+        self.wn = np.array([
+            0.5,
+            0.4,
+            0.5
+        ]) 
+        # Closed-loop damping factor
+        self.zeta = np.array([
+            1.0,
+            1.0,
+            1.0
+        ])           
 
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
-        self.Ki = self.wn / 10 * self.Kp
-        self.Ki = np.zeros((3, 3))
+        self.Ki = self.wn * 0.1 * self.Kp
 
-        # Integral states 
-        self.int_ned = np.zeros(2)
-        self.int_psi = 0.0
+        # Integral states
+        self.int = np.zeros(3)
+        self.int_limit = np.array([500.0, 500.0, np.pi])
 
         # Anti-windup states
-        self.Kaw = np.array([1.0, 1.0, 1.0])
-        self.last_tau_cmd = np.zeros(6)
-        pass
+        self.Kaw = self.wn * 5
+        self.tau_cmd = np.zeros(6)
 
     def reset(self) -> None:
-        self.int_ned = np.zeros(2)
-        self.int_psi = 0.0
-        self.last_tau_cmd = np.zeros(6)
-        pass
+        self.int = np.zeros(3)
+        self.tau_cmd = np.zeros(6)
 
     def compute(
         self,
@@ -107,64 +112,47 @@ class DPController:
             nu_ref = np.zeros(6)
 
         # Position error
-        e_eta_ned = np.array([
+        e_eta = np.array([
             eta_ref[0] - eta[0],
             eta_ref[1] - eta[1],
-            0.0
+            wrap_angle_pi(eta_ref[5] - eta[5])
         ])
-        # Reference velocity
-        nu_ref_ned = np.array([
+
+        # Define J to rotate from NED frame to body frame
+        J = Rz(eta[5])
+        nu_ref_3dof = [
             nu_ref[0],
             nu_ref[1],
-            0.0,
+            nu_ref[5]
+        ]
+        nu_3dof = np.array([
+            nu[0],
+            nu[1],
+            nu[5]
         ])
-        int_ned = np.array([
-            self.int_ned[0],
-            self.int_ned[1],
-            0.0
-        ])
+        # Reference velocity
+        nu_ref_body = J.T @ nu_ref_3dof
+        e_nu = nu_ref_body - nu_3dof
 
-        # Rotate NED fram to body frame
-        J = Rz(eta[5])
-        e_pos_body = J.T @ e_eta_ned
-        nu_ref_body = J.T @ nu_ref_ned
-        int_body = J.T @ int_ned
-        # Yaw error
-        e_psi = wrap_angle_pi(eta_ref[5] - eta[5])  
-
-        e_eta = np.array([
-            e_pos_body[0],
-            e_pos_body[1],
-            e_psi
-        ])
-        e_nu = np.array([
-            nu_ref_body[0] - nu[0],
-            nu_ref_body[1] - nu[1],
-            nu_ref[5] - nu[5]
-        ])
-
-        e_int = np.array([
-            int_body[0],
-            int_body[1],
-            self.int_psi
-        ])
+        # Euler's method (k+1)
+        self.int += dt * e_eta # position tracking error
+        self.int = np.clip(
+            self.int, -self.int_limit, self.int_limit
+        )
 
         # Control law
-        [Fx, Fy, Mz] = (
+        [Fx, Fy, Mz] = J.T @ (
         self.Kp @ e_eta
         + self.Kd @ e_nu
-        + self.Ki @ e_int
+        + self.Ki @ self.int
         )
-        # Euler's method (k+1)
-        self.int_ned += dt * e_eta_ned[:2]; # position tracking error
-        self.int_psi += dt * e_psi; # Heading angle tracking error
         # Return computed tau_d
         tau_d = np.zeros(6)
-        tau_d[0] = Fx
-        tau_d[1] = Fy
-        tau_d[5] = Mz
+        tau_d[[0, 1, 5]] = Fx, Fy, Mz
 
-        self.last_tau_cmd = tau_d.copy()
+        self.tau_cmd = tau_d.copy()
+        if np.any(np.isnan(tau_d)):
+            tau_d = np.zeros(6)
         return tau_d
 
     def apply_external_aw(
@@ -183,24 +171,20 @@ class DPController:
         is fed back into the integral states.
         """
 
-        # Commanded and applied force/moment
-        tau_cmd = self.last_tau_cmd
-
         # Saturation/allocation error
-        aw_error = tau_applied - tau_cmd
+        aw_error = tau_applied - self.tau_cmd
+
+        # Translational anti-windup correction
+        aw_error_3dof = [
+            aw_error[0],
+            aw_error[1],
+            aw_error[5]
+        ]
 
         # BODY -> NED rotation
         J = Rz(psi)
 
-        # Translational anti-windup correction
-        aw_body_xy = aw_error[:2]
-        aw_ned_xy = J[:2, :2] @ aw_body_xy
-
-        self.int_ned += (
-            self.Kaw[:2] * aw_ned_xy * dt
-        )
-
-        # Yaw anti-windup correction
-        self.int_psi += (
-            self.Kaw[2] * aw_error[5] * dt
+        self.int += self.Kaw * J @ aw_error_3dof * dt
+        self.int = np.clip(
+            self.int, -self.int_limit, self.int_limit
         )

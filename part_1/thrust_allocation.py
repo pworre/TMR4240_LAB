@@ -30,6 +30,7 @@ from unittest import result
 import numpy as np
 from scipy.optimize import minimize
 from models.thruster_dynamics import ThrusterConfig
+from simulation.utils import wrap_angle_pi
 
 class ThrustAllocator:
     """Template for student thrust allocation."""
@@ -139,7 +140,7 @@ class ThrustAllocator:
         u_T = z[0]
         FxA1, FyA1 = z[1], z[2]
         FxA2, FyA2 = z[3], z[4]
-
+        """
         #recovering azimuth thrust magnitudes and angles from the solution:
         u_1=np.sqrt(FxA1**2+FyA1**2)
         u_2=np.sqrt(FxA2**2+FyA2**2)
@@ -148,13 +149,25 @@ class ThrustAllocator:
         a_2=np.arctan2(FyA2,FxA2)
 
         #make sure alpha is within [-pi, pi]:
-        a_1=(np.pi+a_1)%(2*np.pi)-np.pi
-        a_2=(np.pi+a_2)%(2*np.pi)-np.pi
-        
+        a_1=wrap_angle_pi(a_1)
+        a_2=wrap_angle_pi(a_2)
+        """
+        def circ_dist(a, b):
+            return abs(wrap_angle_pi(a - b))
 
+        def signed_thrust(Fx, Fy, alpha_prev):
+            u = np.hypot(Fx, Fy)
+            a = wrap_angle_pi(np.arctan2(Fy, Fx))
+            a_flip = wrap_angle_pi(a + np.pi)
+            if circ_dist(a_flip, alpha_prev) < circ_dist(a, alpha_prev):
+                return -u, a_flip
+            return u, a
 
-        u_cmd = [u_T, u_1, u_2]
-        alpha_cmd = [np.pi / 2, a_1, a_2]
+        u_1, a_1 = signed_thrust(FxA1, FyA1, alpha_now[1])
+        u_2, a_2 = signed_thrust(FxA2, FyA2, alpha_now[2])
+
+        u_cmd = np.array([u_T, u_1, u_2])
+        alpha_cmd = np.array([np.pi / 2, a_1, a_2])
 
         u_now = u_cmd
         alpha_now = alpha_cmd
