@@ -68,31 +68,26 @@ class DPController:
         M_diag = np.diag(M)[:3]
         D_diag = np.diag(Dl)[:3]
 
-        # Closed-loop natural frequency [rad/s]
+        # Model parameters
         self.wn = np.array([
-            0.5,
-            0.4,
-            0.5
-        ]) 
-        # Closed-loop damping factor
-        self.zeta = np.array([
-            1.0,
-            1.0,
-            1.0
-        ])           
+            1/20 * 2*np.pi,
+            1/15 * 2*np.pi,
+            1/15 * 2*np.pi
+        ]); # Closed-loop natural frequency [rad/s]
+        self.zeta = 0.7           # Closed-loop damping factor
 
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
-        self.Ki = self.wn * 0.1 * self.Kp
+        self.Ki = self.wn / 20 * self.Kp
 
         # Integral states
         self.int = np.zeros(3)
-        self.int_limit = np.array([500.0, 500.0, np.pi])
+        self.int_limit = np.array([1000.0, 1000.0, np.pi/4])
 
         # Anti-windup states
-        self.Kaw = self.wn * 5
-        self.tau_cmd = np.zeros(6)
+        # self.Kaw = np.diag(1.0 / np.diag(self.Ki))
+        # self.tau_cmd = np.zeros(6)
 
     def reset(self) -> None:
         self.int = np.zeros(3)
@@ -154,14 +149,14 @@ class DPController:
         if np.any(np.isnan(tau_d)):
             tau_d = np.zeros(6)
         return tau_d
-
+"""
     def apply_external_aw(
         self,
         tau_applied: np.ndarray,
         psi: float,
         dt: float
     ) -> None:
-        """
+
         Back-calculation anti-windup.
 
         tau_applied is the actual BODY wrench after allocation and
@@ -169,7 +164,7 @@ class DPController:
 
         The difference between the applied and commanded wrench
         is fed back into the integral states.
-        """
+        
 
         # Saturation/allocation error
         aw_error = tau_applied - self.tau_cmd
@@ -188,3 +183,4 @@ class DPController:
         self.int = np.clip(
             self.int, -self.int_limit, self.int_limit
         )
+"""
