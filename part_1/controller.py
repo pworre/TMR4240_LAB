@@ -126,8 +126,8 @@ class DPController:
             nu[5]
         ])
         # Reference velocity
-        nu_ref_body = J.T @ nu_ref_3dof
-        e_nu = nu_ref_body - nu_3dof
+        nu_ned_3dof = J @ nu_3dof
+        e_nu = nu_ref_3dof - nu_ned_3dof
 
         # Euler's method (k+1)
         self.int += dt * e_eta # position tracking error
