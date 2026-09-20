@@ -78,9 +78,9 @@ class ThrustAllocator:
 
         
         #weights for the cost function:
-        Q=np.diag([100,100,500]) #error penalty
+        Q=np.diag([100,100,100]) #error penalty
         R = np.diag([
-            10.0 / self.thrusters[0].u_max**2,
+            1.0 / self.thrusters[0].u_max**2,
             1.0 / self.thrusters[1].u_max**2,
             1.0 / self.thrusters[1].u_max**2,
             1.0 / self.thrusters[2].u_max**2,
@@ -98,8 +98,13 @@ class ThrustAllocator:
         Fy2_now = u_now[2] * np.sin(alpha_now[2])
 
         z0 = np.array([u_now[0], Fx1_now, Fy1_now, Fx2_now, Fy2_now])
-        print("z0:", z0)
-        
+        # print("z0:", z0)
+        if(self.thrusters[0].u_max**2 - z0[0]**2 < 0):
+            z0[0] = np.sign(z0[0]) * (self.thrusters[0].u_max - 1) 
+        while(self.thrusters[1].u_max**2 - z0[1]**2 - z0[2]**2 < 0):
+            z0[1], z0[2] = 0.99 * np.array([z0[1], z0[2]])
+        while(self.thrusters[2].u_max**2 - z0[3]**2 - z0[4]**2 < 0):
+            z0[3], z0[4] = 0.99 * np.array([z0[3], z0[4]])
         #building the cost function:
         def cost(z): #3x5 5x1 - 3x1
             s = B_e @ z - tau_d[[0,1,5]] #error
@@ -120,23 +125,30 @@ class ThrustAllocator:
             'maxiter': 2000,
             'disp': True
         })
-        '''if not result.success:
-            raise RuntimeError(
-                f"Thruster allocation failed: {result.message}"
-            )'''
-        #print("message:", result.message)
-        #print("z:", result.x)
-        #print("cost:", result.fun)
-        '''if result.success:
-            print("Allocator success")
-            z = result.x
-        else:
-            print(f"Allocator warning: {result.message}")
-            z = z0
-        '''
-        #todo check if the solution is feasible
         z = result.x
-        print("z:", z)
+
+        if not result.success:
+            print(f"[allocator] t={t:.2f}s: SLSQP did not converge ({result.message}) — clipping to feasible set")
+
+        if np.any(np.isnan(z)):
+            # solver returned garbage; fall back to the (already-feasible) initial guess
+            z = z0
+
+        u_max_T = self.thrusters[0].u_max
+        u_max_1 = self.thrusters[1].u_max
+        u_max_2 = self.thrusters[2].u_max
+
+        def clip_pair(fx, fy, umax):
+            mag = np.hypot(fx, fy)
+            if mag > umax and mag > 0:
+                scale = umax / mag
+                return fx * scale, fy * scale
+            return fx, fy
+
+        z[0] = np.clip(z[0], -u_max_T, u_max_T)
+        z[1], z[2] = clip_pair(z[1], z[2], u_max_1)
+        z[3], z[4] = clip_pair(z[3], z[4], u_max_2)
+
         u_T = z[0]
         FxA1, FyA1 = z[1], z[2]
         FxA2, FyA2 = z[3], z[4]

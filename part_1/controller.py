@@ -71,23 +71,22 @@ class DPController:
         # Model parameters
         self.wn = np.array([
             1/20 * 2*np.pi,
-            1/15 * 2*np.pi,
+            1/20 * 2*np.pi,
             1/15 * 2*np.pi
         ]); # Closed-loop natural frequency [rad/s]
-        self.zeta = 0.7           # Closed-loop damping factor
+        self.zeta = 1.0          # Closed-loop damping factor
 
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
-        self.Ki = self.wn / 20 * self.Kp
+        self.Ki = self.wn / 10 * self.Kp
 
         # Integral states
         self.int = np.zeros(3)
-        self.int_limit = np.array([1000.0, 1000.0, np.pi/4])
 
         # Anti-windup states
-        # self.Kaw = np.diag(1.0 / np.diag(self.Ki))
-        # self.tau_cmd = np.zeros(6)
+        self.Kaw = np.array(1.0 / np.diag(self.Ki))
+        self.tau_cmd = np.zeros(6)
 
     def reset(self) -> None:
         self.int = np.zeros(3)
@@ -113,7 +112,7 @@ class DPController:
             wrap_angle_pi(eta_ref[5] - eta[5])
         ])
 
-        # Define J to rotate from NED frame to body frame
+        # Define J to rotate from body frame to NED frame
         J = Rz(eta[5])
         nu_ref_3dof = [
             nu_ref[0],
@@ -126,21 +125,17 @@ class DPController:
             nu[5]
         ])
         # Reference velocity
-        nu_ned_3dof = J @ nu_3dof
-        e_nu = nu_ref_3dof - nu_ned_3dof
-
-        # Euler's method (k+1)
-        self.int += dt * e_eta # position tracking error
-        self.int = np.clip(
-            self.int, -self.int_limit, self.int_limit
-        )
+        e_nu = J.T @ nu_ref_3dof - nu_3dof
 
         # Control law
         [Fx, Fy, Mz] = J.T @ (
         self.Kp @ e_eta
-        + self.Kd @ e_nu
         + self.Ki @ self.int
-        )
+        ) + self.Kd @ e_nu
+
+        # Euler's method (k+1)
+        self.int += dt * e_eta # position tracking error
+
         # Return computed tau_d
         tau_d = np.zeros(6)
         tau_d[[0, 1, 5]] = Fx, Fy, Mz
@@ -148,15 +143,16 @@ class DPController:
         self.tau_cmd = tau_d.copy()
         if np.any(np.isnan(tau_d)):
             tau_d = np.zeros(6)
+
         return tau_d
-"""
+
     def apply_external_aw(
         self,
         tau_applied: np.ndarray,
         psi: float,
         dt: float
     ) -> None:
-
+        """
         Back-calculation anti-windup.
 
         tau_applied is the actual BODY wrench after allocation and
@@ -164,23 +160,19 @@ class DPController:
 
         The difference between the applied and commanded wrench
         is fed back into the integral states.
-        
+        """
 
         # Saturation/allocation error
         aw_error = tau_applied - self.tau_cmd
 
+        # BODY -> NED rotation
+        J = Rz(psi)
+
         # Translational anti-windup correction
-        aw_error_3dof = [
+        aw_error_ned = J @ [
             aw_error[0],
             aw_error[1],
             aw_error[5]
         ]
 
-        # BODY -> NED rotation
-        J = Rz(psi)
-
-        self.int += self.Kaw * J @ aw_error_3dof * dt
-        self.int = np.clip(
-            self.int, -self.int_limit, self.int_limit
-        )
-"""
+        self.int += self.Kaw * aw_error_ned * dt
