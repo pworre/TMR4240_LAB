@@ -67,7 +67,7 @@ class DPController:
         M = M_RB + M_A
         M_diag = np.diag(M)[:3]
         D_diag = np.diag(Dl)[:3]
-        T_b = np.array([20, 20, 20]) # Bandwidth time constants
+        T_b = np.array([40, 20, 30]) # Bandwidth time constants
         w_b = 2 * np.pi / T_b # Bandwidth frecuencies
         self.zeta = 1.0              # Relative damping factors
         self.wn = w_b / np.sqrt(

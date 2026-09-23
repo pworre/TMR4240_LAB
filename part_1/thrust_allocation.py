@@ -49,10 +49,10 @@ class ThrustAllocator:
         n = len(self.thrusters)
         
         if(np.isnan(tau_d[5]) or np.isnan(tau_d[0]) or np.isnan(tau_d[1])):
-            print("tau_d is nan")
+            #print("tau_d is nan")
             tau_d = np.zeros(6)
         if(tau_d[5]==0 and tau_d[0]==0 and tau_d[1]==0):
-            print("tau_d is zero")
+            #print("tau_d is zero")
             return np.zeros(n), np.zeros(n) 
 
 
@@ -123,12 +123,13 @@ class ThrustAllocator:
         result=minimize(cost, z0, method='SLSQP', constraints=constraints, options={
             'ftol': 1e-8,
             'maxiter': 2000,
-            'disp': True
+            'disp': False
         })
         z = result.x
 
         if not result.success:
-            print(f"[allocator] t={t:.2f}s: SLSQP did not converge ({result.message}) — clipping to feasible set")
+            #print(f"[allocator] t={t:.2f}s: SLSQP did not converge ({result.message}) — clipping to feasible set")
+            pass
 
         if np.any(np.isnan(z)):
             # solver returned garbage; fall back to the (already-feasible) initial guess
@@ -183,8 +184,8 @@ class ThrustAllocator:
 
         u_now = u_cmd
         alpha_now = alpha_cmd
-        print("tau_d:", tau_d[[0,1,5]])
+        #print("tau_d:", tau_d[[0,1,5]])
         tau_achieved = B_e @ np.array([u_T, FxA1, FyA1, FxA2, FyA2])
-        print("tau_achieved:", tau_achieved)
+        #print("tau_achieved:", tau_achieved)
 
         return u_cmd, alpha_cmd
