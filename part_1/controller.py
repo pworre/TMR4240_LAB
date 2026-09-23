@@ -67,15 +67,13 @@ class DPController:
         M = M_RB + M_A
         M_diag = np.diag(M)[:3]
         D_diag = np.diag(Dl)[:3]
-
-        # Model parameters
-        self.wn = np.array([
-            1/20 * 2*np.pi,
-            1/20 * 2*np.pi,
-            1/15 * 2*np.pi
-        ]); # Closed-loop natural frequency [rad/s]
-        self.zeta = 1.0          # Closed-loop damping factor
-
+        T_b = np.array([20, 20, 20]) # Bandwidth time constants
+        w_b = 2 * np.pi / T_b # Bandwidth frecuencies
+        self.zeta = 1.0              # Relative damping factors
+        self.wn = w_b / np.sqrt(
+            1 - 2*np.pow(self.zeta, 2) + np.sqrt(
+                4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
+        )); # Closed-loop natural frequency [rad/s]
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
