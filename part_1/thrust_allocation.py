@@ -86,7 +86,6 @@ class ThrustAllocator:
 
         Fx1_now = u_now[1] * np.cos(alpha_now[1])
         Fy1_now = u_now[1] * np.sin(alpha_now[1])
-            
         Fx2_now = u_now[2] * np.cos(alpha_now[2])
         Fy2_now = u_now[2] * np.sin(alpha_now[2])
 
@@ -97,15 +96,11 @@ class ThrustAllocator:
             s = B_e @ z - tau_d[[0,1,5]]/1000 #error
             return s.T @ Q @ s + z.T @ R @ z
 
-
         constraints = [
-            
             {'type': 'ineq',
             'fun': lambda z: self.thrusters[0].u_max/1000 - np.abs(z[0])},
-
             {'type': 'ineq',
             'fun': lambda z: self.thrusters[1].u_max/1000 - np.hypot(z[1], z[2])},
-
             {'type': 'ineq',
             'fun': lambda z: self.thrusters[2].u_max/1000 - np.hypot(z[3], z[4])},
         ]
@@ -117,13 +112,12 @@ class ThrustAllocator:
         })
         results=z=result.x
 
-        if feasible(results, 1e-6):
+        if feasible(results, 1e-6, self):
             #print("Thrust matches controller demand")
             z=results
             u_cmd, alpha_cmd = recover_thrust(z)
             return u_cmd, alpha_cmd
         else:
-            print("Warning: Saturated thrust!")
             z=saturation_mode(B_e, tau_d, self)
 
         u_cmd, alpha_cmd = recover_thrust(z)
@@ -144,25 +138,22 @@ def saturation_mode(B_e, tau_d, self):
     constraints = [
         # B_e z = lambda * tau_d
         {'type': 'eq', 'fun': equality},
-
         {'type': 'ineq','fun': lambda x: (self.thrusters[0].u_max/1000)**2 - x[0]**2},
-
         {'type': 'ineq','fun': lambda x: (self.thrusters[1].u_max/1000)**2 - x[1]**2 - x[2]**2},
-
         {'type': 'ineq','fun': lambda x: (self.thrusters[2].u_max/1000)**2 - x[3]**2 - x[4]**2},
 
         # 0 <= k scalar <= 1
         {'type': 'ineq', 'fun': lambda x: x[5]},
         {'type': 'ineq', 'fun': lambda x: 1.0 - x[5]},
     ]
-    #pseudo inverse for initiall guess
+    #pseudo inverse without constrains
     z_unit = np.linalg.pinv(B_e) @ tau
     scales = [
         self.thrusters[0].u_max/1000 / abs(z_unit[0]),
         self.thrusters[1].u_max/1000 / np.hypot(z_unit[1], z_unit[2]),
         self.thrusters[2].u_max/1000 / np.hypot(z_unit[3], z_unit[4])
     ]
-    #creating a valid initial scaler
+    #creating a valid initial scaler to start from
     k0 = min(1.0, *scales) * 0.5
 
     z0 = k0 * z_unit
@@ -172,32 +163,30 @@ def saturation_mode(B_e, tau_d, self):
     z = result.x[:5]
     k = result.x[5]
 
-    if feasible(z,1e-6):
+    if feasible(z,1e-3, self):
+        print("Warning: Saturated thrust!") 
         return z
-    '''print("z satur:", z)
-    print("lambda", lam)
-    print("ta", tau_d[[0,1,5]]/1000)
-    print("tau_achieved", B_e @ z)
-    print("k", (tau_d[[0,1,5]]/1000)/(B_e @ z))'''
+    
+    print("Warning: Zero Thrust!") #no solution found
     return np.zeros(5)
 
 def feasible(z, limit, self):
     #check if solution matches thruster limits
     magA1=np.hypot(z[1], z[2])-limit
     magA2=np.hypot(z[3], z[4])-limit
-    if z[0]>self.thrusters[0].u_max/1000 or magA1>self.thrusters[1].u_max/1000 or magA2>self.thrusters[0].u_max/1000:
+    if z[0]-limit*0.5>self.thrusters[0].u_max/1000 or magA1>self.thrusters[1].u_max/1000 or magA2>self.thrusters[2].u_max/1000:
         return False
     return True
 
 def recover_thrust(z):
-    z=1000*z
+    z=1000*z #back to N
     u_T = z[0]
     FxA1, FyA1 = z[1], z[2]
     FxA2, FyA2 = z[3], z[4]
             
     #recovering azimuth thrust magnitudes and angles from the solution:
-    u_1=np.sqrt(FxA1**2+FyA1**2)
-    u_2=np.sqrt(FxA2**2+FyA2**2)
+    u_1=np.hypot(FxA1,FyA1)
+    u_2=np.hypot(FxA2,FyA2)
     
     a_1=np.arctan2(FyA1,FxA1)
     a_2=np.arctan2(FyA2,FxA2)
