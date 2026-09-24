@@ -71,13 +71,13 @@ class DPController:
         w_b = 2 * np.pi / T_b # Bandwidth frecuencies
         self.zeta = 1.0              # Relative damping factors
         self.wn = w_b / np.sqrt(
-            1 - 2*np.pow(self.zeta, 2) + np.sqrt(
-                4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
+            1 - 2*pow(self.zeta, 2) + np.sqrt(
+                4*pow(self.zeta, 4) - 4*pow(self.zeta, 2) + 2
         )); # Closed-loop natural frequency [rad/s]
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
-        self.Ki = self.wn / 10 * self.Kp
+        self.Ki = self.wn / 8 * self.Kp
 
         # Integral states
         self.int = np.zeros(3)

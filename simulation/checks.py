@@ -27,8 +27,11 @@ signatures working.  Angles are radians, NED, 0 = North, pi/2 = East.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from models.thruster_dynamics import ThrusterSet
@@ -541,6 +544,68 @@ def run_check(key: str) -> CheckResult:
 def run_all(fast_only: bool = False) -> list[CheckResult]:
     keys = FAST_CHECKS if fast_only else ALL_CHECKS
     return [run_check(k) for k in keys]
+
+
+def plot_check_results(results: list[CheckResult], show: bool = True) -> list:
+    """Create plots for every simulation log embedded in the check results.
+
+    Each check may keep a dict of labelled logs, such as the four mandatory
+    simulations. This helper opens the standard report figures for each log set,
+    saves them in a local ``plots`` folder, and optionally calls ``plt.show()``
+    so a terminal run can display them.
+    """
+    from simulation.plotter import plot_current, plot_dashboard, plot_time_histories, plot_wind
+
+    project_root = Path(__file__).resolve().parents[1]
+    plots_dir = project_root / "plots"
+    plots_dir.mkdir(exist_ok=True)
+
+    def safe_name(value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "plot"
+
+    figures = []
+    for result in results:
+        for label, logs in result.logs.items():
+            if not hasattr(logs, "eta") or not hasattr(logs, "t"):
+                continue
+            base_name = f"{safe_name(result.name)}__{safe_name(label)}"
+            try:
+                fig_dash = plot_dashboard(logs)
+                fig_dash.suptitle(f"{result.name} — {label}", y=1.02)
+                fig_dash.savefig(plots_dir / f"{base_name}__dashboard.png", dpi=200,
+                                bbox_inches="tight")
+                figures.append(fig_dash)
+            except Exception:
+                pass
+            try:
+                fig_time = plot_time_histories(logs)
+                fig_time.suptitle(f"{result.name} — {label} (time histories)", y=1.02)
+                fig_time.savefig(plots_dir / f"{base_name}__time_histories.png", dpi=200,
+                                 bbox_inches="tight")
+                figures.append(fig_time)
+            except Exception:
+                pass
+            try:
+                if hasattr(logs, "Uc") and np.any(np.asarray(logs.Uc) != 0.0):
+                    fig_cur = plot_current(logs)
+                    fig_cur.suptitle(f"{result.name} — {label} (current)", y=1.02)
+                    fig_cur.savefig(plots_dir / f"{base_name}__current.png", dpi=200,
+                                    bbox_inches="tight")
+                    figures.append(fig_cur)
+            except Exception:
+                pass
+            try:
+                if hasattr(logs, "U_w") and np.any(np.asarray(logs.U_w) != 0.0):
+                    fig_wind = plot_wind(logs)
+                    fig_wind.suptitle(f"{result.name} — {label} (wind)", y=1.02)
+                    fig_wind.savefig(plots_dir / f"{base_name}__wind.png", dpi=200,
+                                    bbox_inches="tight")
+                    figures.append(fig_wind)
+            except Exception:
+                pass
+    if show:
+        plt.show()
+    return figures
 
 
 def print_result(r: CheckResult) -> None:
