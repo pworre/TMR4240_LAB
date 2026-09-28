@@ -115,6 +115,8 @@ class Wind:
         # Slowly varying wind
         w = self.random_generator.normal(0,1)
         self.U_slow += (-self.U_slow / self.tau_slow * dt + np.sqrt(2*self.sigma_slow**2 / self.tau_slow * dt) * w)
+
+        # Complete Wind Speed
         U_w = self.mean_speed + self.U_slow
 
         # Wind components in NED
@@ -133,19 +135,19 @@ class Wind:
         V_rw = V_rw_body - nu[:2].reshape(2,1)
         U_rw = np.sqrt(V_rw[0,0]**2 + V_rw[1,0]**2)
 
-        # Wind coefficient table
+        # Relative wind angle
         alpha_rw = np.arctan2(V_rw[1,0], V_rw[0,0])
         alpha_rw = alpha_rw % (2*np.pi)
+        alpha_rw_deg = np.rad2deg(alpha_rw) # index to use in table
 
-        # Find index
-        alpha_rw_deg = np.rad2deg(alpha_rw)
-
+        # Wind Coefficient table    
         alpha_deg, C6 = load_wind_coefficients()
         C_w = np.array([
             np.interp(alpha_rw_deg, alpha_deg, C6[:, i])
             for i in range(6)
         ])
 
+        # Wind Forces
         tau_w6 = np.zeros(6)
         tau_w6 = U_rw**2 * C_w
 
