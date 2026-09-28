@@ -153,7 +153,3 @@ class Wind:
 
         info = {"U": U_rw, "beta_ned": self.beta, "alpha_body": alpha_rw}
         return tau_w6, info
-
-# Smallest sign angle
-def ssa(angle):
-    return np.mod(angle + np.pi, 2 * np.pi) - np.pi
