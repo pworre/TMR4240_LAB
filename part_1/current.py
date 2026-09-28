@@ -49,7 +49,6 @@ class Current:
     def __init__(self, speed: float = 0.0, beta: float = 0.0, *,
                  semantics: str = "towards",
                  beta_end: float | None = None, duration: float = 0.0):
-        # TODO: Store and use the parameters above in step().
         self.speed = float(speed)
         self.beta = float(beta)
         self.semantics = semantics
@@ -69,7 +68,6 @@ class Current:
         eta: np.ndarray,
         nu: np.ndarray,
     ) -> np.ndarray:
-        # TODO: Replace this placeholder with your current model.
         nu_c_ned = np.zeros((6,1))
 
         # Linear varying direction
@@ -83,6 +81,7 @@ class Current:
         else:
             beta_v = self.beta
 
+        # Generalised current velocities [NED]
         nu_c_ned[0] = self.speed * np.cos(beta_v)
         nu_c_ned[1] = self.speed * np.sin(beta_v)
         
