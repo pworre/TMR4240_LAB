@@ -1,0 +1,20 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+data = pd.read_csv("allocator_results.csv")
+
+plt.figure()
+#plt.plot(data["Fy_d"], label="Fy controller demand")
+#plt.plot(data["Fx_d"], label="Fx controller demand")
+plt.plot(data["Fx_d"]/data["Fx_a"], label="k1")
+plt.plot(data["Fy_d"]/data["Fy_a"],linestyle='dotted' ,label="k2")
+plt.plot(data["Mz_d"]/data["Mz_a"], linestyle='dashed', label="k3")
+#plt.plot(data["Fx_a"], label="Fx achieved")
+#plt.plot(data["Fy_a"], label="Fy achieved")
+
+#plt.plot(data["Fy_d"])
+#plt.plot(data["Mz_d"])
+#plt.plot(data["Fy_d"]/data["Fy_a"], label="Fy demand")
+#lt.plot(data["Mz_d"]/data["Mz_a"], label="Mz demand")
+plt.legend()
+plt.show()
