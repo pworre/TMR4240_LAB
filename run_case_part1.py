@@ -55,6 +55,14 @@ def main():
     current = Current(speed=2, beta=0, semantics="towards", beta_end=-np.pi/2, duration=200)
     wind = Wind(mean_speed=5, beta=np.pi/4, semantics="from", sigma_slow=0)
 
+    '''
+    with open("allocator_results.csv", "w") as f:
+        f.write(
+        "lambda,"
+        "Fx_d,Fy_d,Mz_d,"
+        "Fx_a,Fy_a,Mz_a,"
+        "k_Fx,k_Fy,k_Mz\n")
+    '''
     # Simulation 1a from the project description — station keeping at the
     # origin in a 0.5 m/s current from east, no wind. Once your subsystems
     # are implemented, uncomment these two lines (and set T=800.0 above):

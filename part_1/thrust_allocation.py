@@ -39,6 +39,7 @@ class ThrustAllocator:
     def __init__(self, thrusters: List[ThrusterConfig]):
         self.thrusters = thrusters
 
+
     def allocate(
         self,
         t: float,
@@ -162,9 +163,18 @@ def saturation_mode(B_e, tau_d, self):
 
     z = result.x[:5]
     k = result.x[5]
-
     if feasible(z,1e-3, self):
-        print("Warning: Saturated thrust!") 
+        print("Warning: Saturated thrust!")
+        #for wrinting into a csv file
+        '''tau = tau_d[[0, 1, 5]] / 1000
+        tau_achieved = B_e @ z
+        with open("allocator_results.csv", "a") as f:
+            f.write(
+                f"{k},"
+                f"{tau[0]},{tau[1]},{tau[2]},"
+                f"{tau_achieved[0]},{tau_achieved[1]},{tau_achieved[2]},"
+                f"{k[0]},{k[1]},{k[2]}\n"
+            )'''
         return z
     
     print("Warning: Zero Thrust!") #no solution found
@@ -179,7 +189,7 @@ def feasible(z, limit, self):
     return True
 
 def recover_thrust(z):
-    z=1000*z #back to N
+    z=1000*z #back to kN
     u_T = z[0]
     FxA1, FyA1 = z[1], z[2]
     FxA2, FyA2 = z[3], z[4]
