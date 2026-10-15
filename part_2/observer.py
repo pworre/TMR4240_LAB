@@ -114,10 +114,7 @@ class KalmanFilterObserver(Observer):
             [0.02**2, 0.02**2, np.deg2rad(0.02)**2],
             dtype=float,
         )
-        self.q_force = np.array(
-            [500.0**2, 500.0**2, 1000.0**2],
-            dtype=float,
-        )
+        self.q_force = 0.5 * np.array(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
         self.q_bias = np.array(
             [100.0**2, 100.0**2, 200.0**2],
             dtype=float,
@@ -131,11 +128,14 @@ class KalmanFilterObserver(Observer):
         )
         self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
 
-        self.Cw = np.hstack([self.I3, self.I3])
-        self.H = np.hstack([self.Cw, self.I3, np.zeros((3, 6))])
+        Cw = np.hstack([self.I3, self.I3])
+        self.H = np.hstack([Cw, self.I3, np.zeros((3, 6))])
+        E_w = np.block([
+            [self.Z3],
+            [self.I3]
+        ])
         self.G = np.block([
-            [np.zeros((3, 9))],
-            [self.I3, np.zeros((3, 6))],
+            [E_w, np.zeros((6, 6))],
             [np.zeros((3, 9))],
             [self.Z3, self.M_inv, self.Z3],
             [np.zeros((3, 6)), self.I3],
