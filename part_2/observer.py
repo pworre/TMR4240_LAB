@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import numpy as np
+import pickle
+from importlib.resources import files
 from scipy.differentiate import jacobian
 from models.sensors import SENSOR_ETA_STD
 from simulation.utils import Rz, wrap_angle_pi
@@ -87,22 +89,27 @@ class KalmanFilterObserver(Observer):
     name = "kalman"
 
     def __init__(self, *args, **kwargs):
+        # Utility
         self.n = 15
         self.m = 3
         self.I3 = np.eye(3)
         self.Z3 = np.zeros((3,3))
+
+        # Load vessel data
+        pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
+        with open(str(pkl), "rb") as f:
+            data = pickle.load(f)
+        M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
+        M = np.diag(np.diag(M_RB + M_A))
+        self.M_inv = np.linalg.inv(M)
+        self.damping = np.diag(np.diag(Dl))
+
+        # Estimated(guessed) model parameters
         self.wave_wn = np.full(3, 0.8, dtype=float)
         self.wave_zeta = np.full(3, 0.1, dtype=float)
-
-        # Nominal diagonal 3-DOF matrices (surge, sway, yaw). Replace these
-        # with identified vessel hydrodynamic coefficients when available.
-        self.M = np.diag([1.0e6, 1.0e6, 1.0e9])
-        self.damping = np.diag([1.0e5, 1.0e5, 1.0e8])
-        self.M_inv = np.linalg.inv(self.M)
         self.bias_tau = np.full(3, 300.0, dtype=float)
 
-        # Continuous-time white-noise spectral densities: oscillator
-        # acceleration, body force/moment model error, and NED bias random walk.
+        # Model and measurement noise
         self.q_wave_accel = np.array(
             [0.02**2, 0.02**2, np.deg2rad(0.02)**2],
             dtype=float,
@@ -115,24 +122,24 @@ class KalmanFilterObserver(Observer):
             [100.0**2, 100.0**2, 200.0**2],
             dtype=float,
         )
-        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
-
-        self.Cw = np.hstack([self.I3, self.I3])
-        self.H = np.hstack([self.Cw, self.I3, np.zeros((3, 6))])
-        self.G = np.block([
-            [np.zeros((3, 9))],
-            [self.I3,        np.zeros((3, 6))],
-            [np.zeros((3, 9))],
-            [self.I3, self.M_inv, self.I3],
-            [np.zeros((3, 6)), self.I3],
-        ])
-        self.Qc = np.diag(
+        self.Q = np.diag(
             np.concatenate([
                 self.q_wave_accel,
                 self.q_force,
                 self.q_bias,
             ])
         )
+        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
+
+        self.Cw = np.hstack([self.I3, self.I3])
+        self.H = np.hstack([self.Cw, self.I3, np.zeros((3, 6))])
+        self.G = np.block([
+            [np.zeros((3, 9))],
+            [self.I3, np.zeros((3, 6))],
+            [np.zeros((3, 9))],
+            [self.Z3, self.M_inv, self.Z3],
+            [np.zeros((3, 6)), self.I3],
+        ])
         self.A_w = np.block([
             [self.Z3,           self.I3],
             [-np.diag(self.wave_wn**2), -np.diag(2.0 * self.wave_zeta * self.wave_wn)],
@@ -189,13 +196,13 @@ class KalmanFilterObserver(Observer):
         ).df
         
         # Discretize
-        Fk = np.eye(self.n) + dt * A
-        Qk = dt * self.G @ self.Qc @ self.G.T
+        F = np.eye(self.n) + dt * A
+        Q_d = dt * self.G @ self.Q @ self.G.T
 
         # Prediction
         x_pred = self.x + dt * f
         x_pred[8, 0] = wrap_angle_pi(float(x_pred[8, 0]))
-        P_pred = Fk @ self.P @ Fk.T + Qk
+        P_pred = F @ self.P @ F.T + Q_d
 
         # Finding prediction error
         y = np.array(
