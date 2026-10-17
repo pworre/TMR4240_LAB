@@ -45,8 +45,10 @@ command, and on what basis, is part of your allocation design.
 """
 from typing import List, Optional, Tuple
 import numpy as np
-
+from scipy.optimize import minimize
+from simulation.utils import wrap_angle_pi
 from models.thruster_dynamics import ThrusterConfig
+
 
 
 class ThrustAllocator:
@@ -64,10 +66,174 @@ class ThrustAllocator:
         alpha_now: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         n = len(self.thrusters)
+        '''To better condition the problem I am working with kNs'''
+        
+        if(np.isnan(tau_d[5]) or np.isnan(tau_d[0]) or np.isnan(tau_d[1])):
+            print("tau_d is nan")
+            tau_d = np.zeros(6)
 
-        # TODO: Replace this placeholder with your thrust allocation algorithm.
-        # The placeholder commands zero thrust and alpha for all thrusters.
-        u_cmd = np.zeros(n)
-        alpha_cmd = np.zeros(n)
+        #tunnel thruster (constant):
+        B_T=np.array([0,1,self.thrusters[0].x]).T
+        #azimuth thruster 1 (linearization):
+        B_FxA1=np.array([1,0, -self.thrusters[1].y]).T
+        B_FyA1=np.array([0,1, self.thrusters[1].x]).T
+        #azimuth thruster 2 (linearization):
+        B_FxA2=np.array([1,0, -self.thrusters[2].y]).T
+        B_FyA2=np.array([0,1, self.thrusters[2].x]).T
+        #creating the actuator configuration matrix
+        B_e = np.column_stack([B_T, B_FxA1, B_FyA1, B_FxA2, B_FyA2])
+
+        #check rank(B)=3:
+        if(np.linalg.matrix_rank(B_e)<3):
+            print("B is not full rank, check the actuator configuration matrix")
+            return np.zeros(n), np.zeros(n)
+
+        #weights for the cost function:
+        Q=np.diag([100,100,100]) #error penalty
+        R = np.diag([
+            1.0 / self.thrusters[0].u_max**2,
+            1.0 / self.thrusters[1].u_max**2,
+            1.0 / self.thrusters[1].u_max**2,
+            1.0 / self.thrusters[2].u_max**2,
+            1.0 / self.thrusters[2].u_max**2,
+        ])
+
+        if u_now is None and alpha_now is None:
+            u_now = np.zeros(n)
+            alpha_now = np.zeros(n)
+
+        Fx1_now = u_now[1] * np.cos(alpha_now[1])
+        Fy1_now = u_now[1] * np.sin(alpha_now[1])
+        Fx2_now = u_now[2] * np.cos(alpha_now[2])
+        Fy2_now = u_now[2] * np.sin(alpha_now[2])
+
+        z0 = np.array([u_now[0], Fx1_now, Fy1_now, Fx2_now, Fy2_now])/1000
+
+        #building the cost function:
+        def cost(z): #3x5 5x1 - 3x1
+            s = B_e @ z - tau_d[[0,1,5]]/1000 #error
+            return s.T @ Q @ s + z.T @ R @ z
+
+        constraints = [
+            {'type': 'ineq',
+            'fun': lambda z: self.thrusters[0].u_max/1000 - np.abs(z[0])},
+            {'type': 'ineq',
+            'fun': lambda z: self.thrusters[1].u_max/1000 - np.hypot(z[1], z[2])},
+            {'type': 'ineq',
+            'fun': lambda z: self.thrusters[2].u_max/1000 - np.hypot(z[3], z[4])},
+        ]
+
+        result=minimize(cost, z0, method='SLSQP', constraints=constraints, options={
+            'ftol': 1e-8,
+            'maxiter': 2000,
+            'disp': False
+        })
+        z=result.x
+
+        #satured thrust calc.
+        if not feasible(z, 1e-6, self):
+            z=saturation_mode(B_e, tau_d, self)
+
+        #returns it back in Ns
+        u_cmd, alpha_cmd = recover_thrust(z)
+        #rate limit check:
+        if not dynamics(u_now, alpha_now, u_cmd, alpha_cmd, dt, self):
+            print("Rate limit exceeded, using previous command")
+            u_cmd = u_now
+            alpha_cmd = alpha_now
 
         return u_cmd, alpha_cmd
+
+def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self):
+    #check if rotation rate is ok:
+    if self.thrusters[1].rot_speed>np.abs((alpha_cmd[1]-alpha_now[1])/dt) or self.thrusters[2].rot_speed>np.abs((alpha_cmd[2]-alpha_now[2])/dt):
+        print("Azimuth rotation speed exceeded!")
+        return False
+    #thruster rate limit check:
+    if self.thrusters[0].u_rate>np.abs((u_cmd[0]-u_now[0])/dt) or self.thrusters[1].u_rate>np.abs((u_cmd[1]-u_now[1])/dt) or self.thrusters[2].u_rate>np.abs((u_cmd[2]-u_now[2])/dt):
+        print("Thruster rate limit exceeded!")
+        return False
+    return True
+
+def saturation_mode(B_e, tau_d, self):
+    tau = tau_d[[0, 1, 5]]/1000
+
+    def cost(x):
+        return -x[5]       
+
+    def equality(x):
+        z = x[:5]
+        k = x[5]
+        return B_e @ z - k * tau
+
+    constraints = [
+        # B_e z = lambda * tau_d
+        {'type': 'eq', 'fun': equality},
+        {'type': 'ineq','fun': lambda x: (self.thrusters[0].u_max/1000)**2 - x[0]**2},
+        {'type': 'ineq','fun': lambda x: (self.thrusters[1].u_max/1000)**2 - x[1]**2 - x[2]**2},
+        {'type': 'ineq','fun': lambda x: (self.thrusters[2].u_max/1000)**2 - x[3]**2 - x[4]**2},
+
+        # 0 <= k scalar <= 1
+        {'type': 'ineq', 'fun': lambda x: x[5]},
+        {'type': 'ineq', 'fun': lambda x: 1.0 - x[5]},
+    ]
+    #pseudo inverse without constrains
+    z_unit = np.linalg.pinv(B_e) @ tau
+    scales = [
+        self.thrusters[0].u_max/1000 / abs(z_unit[0]),
+        self.thrusters[1].u_max/1000 / np.hypot(z_unit[1], z_unit[2]),
+        self.thrusters[2].u_max/1000 / np.hypot(z_unit[3], z_unit[4])
+    ]
+    #creating a valid initial scaler to start from
+    k0 = min(1.0, *scales) * 0.5
+
+    z0 = k0 * z_unit
+    x0 = np.r_[z0, k0]
+    result = minimize(cost, x0 , method='SLSQP', constraints=constraints, options={'ftol': 1e-8,'maxiter': 2000,'disp': False})
+
+    z = result.x[:5]
+    k = result.x[5]
+    if feasible(z,1e-3, self):
+        print("Warning: Saturated thrust!")
+        #for wrinting into a csv file
+        '''tau = tau_d[[0, 1, 5]] / 1000
+        tau_achieved = B_e @ z
+        with open("allocator_results.csv", "a") as f:
+            f.write(
+                f"{k},"
+                f"{tau[0]},{tau[1]},{tau[2]},"
+                f"{tau_achieved[0]},{tau_achieved[1]},{tau_achieved[2]},"
+                f"{k[0]},{k[1]},{k[2]}\n"
+            )'''
+        return z
+    
+    print("Warning: Zero Thrust!") #no solution found
+    return np.zeros(5)
+
+def feasible(z, limit, self):
+    #check if solution matches thruster limits
+    magA1=np.hypot(z[1], z[2])-limit
+    magA2=np.hypot(z[3], z[4])-limit
+    if z[0]-limit*0.5>self.thrusters[0].u_max/1000 or magA1>self.thrusters[1].u_max/1000 or magA2>self.thrusters[2].u_max/1000:
+        return False
+    return True
+
+def recover_thrust(z):
+    z=1000*z #back to kN
+    u_T = z[0]
+    FxA1, FyA1 = z[1], z[2]
+    FxA2, FyA2 = z[3], z[4]
+            
+    #recovering azimuth thrust magnitudes and angles from the solution:
+    u_1=np.hypot(FxA1,FyA1)
+    u_2=np.hypot(FxA2,FyA2)
+    
+    a_1=np.arctan2(FyA1,FxA1)
+    a_2=np.arctan2(FyA2,FxA2)
+    
+    #make sure alpha is within [-pi, pi]:
+    a_1=wrap_angle_pi(a_1)
+    a_2=wrap_angle_pi(a_2)
+    u_cmd = np.array([u_T, u_1, u_2])
+    alpha_cmd = np.array([np.pi / 2, a_1, a_2])
+    return u_cmd, alpha_cmd
