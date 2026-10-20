@@ -146,11 +146,11 @@ class ThrustAllocator:
 
 def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self):
     #check if rotation rate is ok:
-    if self.thrusters[1].rot_speed>np.abs((alpha_cmd[1]-alpha_now[1])/dt) or self.thrusters[2].rot_speed>np.abs((alpha_cmd[2]-alpha_now[2])/dt):
+    if self.thrusters[1].rot_speed<np.abs((alpha_cmd[1]-alpha_now[1])/dt) or self.thrusters[2].rot_speed<np.abs((alpha_cmd[2]-alpha_now[2])/dt):
         print("Azimuth rotation speed exceeded!")
         return False
     #thruster rate limit check:
-    if self.thrusters[0].u_rate>np.abs((u_cmd[0]-u_now[0])/dt) or self.thrusters[1].u_rate>np.abs((u_cmd[1]-u_now[1])/dt) or self.thrusters[2].u_rate>np.abs((u_cmd[2]-u_now[2])/dt):
+    if self.thrusters[0].u_rate<np.abs((u_cmd[0]-u_now[0])/dt) or self.thrusters[1].u_rate<np.abs((u_cmd[1]-u_now[1])/dt) or self.thrusters[2].u_rate<np.abs((u_cmd[2]-u_now[2])/dt):
         print("Thruster rate limit exceeded!")
         return False
     return True
