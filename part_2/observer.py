@@ -1,6 +1,6 @@
 """Student observer templates and their common simulator interface.
 
-The simulator calls, once per step (pose measurement only, no velocity):
+The simulator calls, once per step (pose y only, no velocity):
 
     observer.step(t, dt, eta_measured, tau_est) -> ObserverEstimate(eta, nu, bias)
 
@@ -24,6 +24,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import numpy as np
+import pickle
+from importlib.resources import files
+from scipy.differentiate import jacobian
+from models.sensors import SENSOR_ETA_STD
+from simulation.utils import Rz, wrap_angle_pi
 
 
 @dataclass
@@ -76,7 +81,7 @@ class NonlinearPassiveObserver(Observer):
 class KalmanFilterObserver(Observer):
     """Template for a discrete KF/EKF observer.
 
-    Students define the process/measurement models and tune Q, R and P0.
+    Students define the process/y models and tune Q, R and P0.
     The input ``tau_est`` is the desired controller wrench before thruster
     dynamics.
     """
@@ -84,11 +89,154 @@ class KalmanFilterObserver(Observer):
     name = "kalman"
 
     def __init__(self, *args, **kwargs):
-        pass
+        # Utility
+        self.n = 15
+        self.m = 3
+        self.I3 = np.eye(3)
+        self.Z3 = np.zeros((3,3))
+
+        # Load vessel data
+        pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
+        with open(str(pkl), "rb") as f:
+            data = pickle.load(f)
+        M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
+        M = np.diag(np.diag(M_RB + M_A))
+        self.M_inv = np.linalg.inv(M)
+        self.damping = np.diag(np.diag(Dl))
+
+        # Estimated(guessed) model parameters
+        self.wave_wn = np.full(3, 0.8, dtype=float)
+        self.wave_zeta = np.full(3, 0.1, dtype=float)
+        self.bias_tau = np.full(3, 300.0, dtype=float)
+
+        # Model and measurement noise
+        self.q_wave_accel = np.array(
+            [0.02**2, 0.02**2, np.deg2rad(0.02)**2],
+            dtype=float,
+        )
+        self.q_force = 0.5 * np.array(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
+        self.q_bias = np.array(
+            [100.0**2, 100.0**2, 200.0**2],
+            dtype=float,
+        )
+        self.Q = np.diag(
+            np.concatenate([
+                self.q_wave_accel,
+                self.q_force,
+                self.q_bias,
+            ])
+        )
+        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
+
+        Cw = np.hstack([self.I3, self.I3])
+        self.H = np.hstack([Cw, self.I3, np.zeros((3, 6))])
+        E_w = np.block([
+            [self.Z3],
+            [self.I3]
+        ])
+        self.G = np.block([
+            [E_w, np.zeros((6, 6))],
+            [np.zeros((3, 9))],
+            [self.Z3, self.M_inv, self.Z3],
+            [np.zeros((3, 6)), self.I3],
+        ])
+        self.A_w = np.block([
+            [self.Z3,           self.I3],
+            [-np.diag(self.wave_wn**2), -np.diag(2.0 * self.wave_zeta * self.wave_wn)],
+        ])
+        self.P = np.diag([
+            0.25, 0.25, np.deg2rad(0.25)**2,
+            0.04, 0.04, np.deg2rad(0.05)**2,
+            1e-4, 1e-4, np.deg2rad(0.05)**2,
+            0.25, 0.25, 0.01,
+            1e6, 1e6, 1e8,
+        ])
+
+    def reset(self, eta0: np.ndarray | None = None):
+        eta0 = (
+            np.zeros(6)
+            if eta0 is None
+            else np.asarray(eta0, dtype=float).reshape(6)
+        )
+        self.x = np.zeros((self.n, 1), dtype=float)
+        self.x[6:9, 0] = [eta0[0], eta0[1], eta0[5]]
+
+    def _continuous_dynamics(
+        self, x: np.ndarray, tau_body: np.ndarray,
+    ) -> np.ndarray:
+        eta = x[6:9]
+        nu = x[9:12]
+        bias_ned = x[12:15]
+        J = Rz(float(eta[2]))
+
+        return np.concatenate((
+            self.A_w @ x[:6],
+            J @ nu,
+            self.M_inv @ (-self.damping @ nu + J.T @ bias_ned + tau_body),
+            -bias_ned / self.bias_tau,
+        ))
 
     def step(self, t, dt, eta_measured, tau_est):
-        # TODO: implement the Kalman filter or extended Kalman filter.
-        return self._placeholder(eta_measured)
+        eta_measured = np.asarray(eta_measured, dtype=float).reshape(6)
+        tau_est = np.asarray(tau_est, dtype=float).reshape(6)
+        if dt <= 0.0:
+            raise ValueError("dt must be > 0")
+        tau_body = tau_est[[0, 1, 5]]
+
+        # System dynamics
+        f = self._continuous_dynamics(self.x[:, 0], tau_body).reshape(self.n, 1)
+        A = jacobian(
+            lambda states: np.apply_along_axis(
+                self._continuous_dynamics,
+                axis=0,
+                arr=states,
+                tau_body=tau_body,
+            ),
+            self.x[:, 0],
+        ).df
+        
+        # Discretize
+        F = np.eye(self.n) + dt * A
+        Q_d = dt * self.G @ self.Q @ self.G.T
+
+        # Prediction
+        x_pred = self.x + dt * f
+        x_pred[8, 0] = wrap_angle_pi(float(x_pred[8, 0]))
+        P_pred = F @ self.P @ F.T + Q_d
+
+        # Finding prediction error
+        y = np.array(
+            [eta_measured[0], eta_measured[1], eta_measured[5]],
+            dtype=float,
+        ).reshape(self.m, 1)
+        z = y - self.H @ x_pred
+        z[2, 0] = wrap_angle_pi(float(z[2, 0]))
+
+        S = self.H @ P_pred @ self.H.T + self.R
+        K = np.linalg.solve(S, self.H @ P_pred).T
+
+        # Update
+        self.x = x_pred + K @ z
+        self.x[8, 0] = wrap_angle_pi(float(self.x[8, 0]))
+        I_KH = np.eye(self.n) - K @ self.H
+        self.P = I_KH @ P_pred @ I_KH.T + K @ self.R @ K.T
+        self.P = 0.5 * (self.P + self.P.T)
+
+        # Return final values
+        eta_est = np.zeros(6, dtype=float)
+        eta_est[[0, 1, 5]] = self.x[6:9, 0]
+
+        nu_est = np.zeros(6, dtype=float)
+        nu_est[[0, 1, 5]] = self.x[9:12, 0]
+
+        bias_est = np.zeros(6, dtype=float)
+        bias_est[[0, 1, 5]] = self.x[12:15, 0]
+        return ObserverEstimate(
+            eta=eta_est,
+            nu=nu_est,
+            bias=bias_est,
+        )
+
 
 
 def select_observer(kind: str, **kwargs) -> Observer:
@@ -101,4 +249,3 @@ def select_observer(kind: str, **kwargs) -> Observer:
         return choices[kind](**kwargs)
     except KeyError as exc:
         raise ValueError(f"observer_type must be one of {tuple(choices)}") from exc
-
