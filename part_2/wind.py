@@ -229,7 +229,7 @@ class Wind:
             self.U_slow = 0.0
             return
 
-         w = self.random_generator.normal(0,1)
+        w = self.random_generator.normal(0,1)
         self.U_slow += (-self.U_slow / self.tau_slow * dt + np.sqrt(2*self.sigma_slow**2 / self.tau_slow * dt) * w)
 
     def update_slow_direction(self, dt: float):
@@ -242,7 +242,7 @@ class Wind:
 
         # Gauss-Markov principle to go back to origin + standard deviation in direction of gust amplitude
         self.beta_slow += (
-            -self.beta_slow / self.tau_dir * dt
+            - self.beta_slow / self.tau_dir * dt
             + self.sigma_dir
             * np.sqrt(2.0 * dt / self.tau_dir)
             * w
@@ -252,7 +252,7 @@ class Wind:
         if self.beta_slow > self.dir_limit:
             self.beta_slow = self.dir_limit
         elif self.beta_slow < -self.dir_limit:
-            self.beta_slow = -self
+            self.beta_slow = -self.dir_limit
 
     def step(
         self,
