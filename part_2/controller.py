@@ -76,7 +76,7 @@ class DPController:
         T_b = np.array([40, 20, 30]) # Bandwidth time constants
         w_b = 2 * np.pi / T_b # Bandwidth frecuencies
         self.zeta = 1.0              # Relative damping factors
-        # self.wn = 2 * np.array([0.495, 0.561, 0.495])
+        # self.wn = 2 * np.array([0.495, 0.561, 0.495]) # Natural frequencies from open loop crossover frequencies.
         self.wn = w_b / np.sqrt(
             1 - 2*np.pow(self.zeta, 2) + np.sqrt(
                 4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
