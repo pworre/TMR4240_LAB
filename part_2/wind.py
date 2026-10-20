@@ -136,6 +136,123 @@ class Wind:
         # Semantics
         if self.semantics == "from":
             self.beta = (self.beta + np.pi) % (2*np.pi)
+        else:
+            self.beta = float(self.beta) % (2*np.pi)
+
+        self.random_generator = np.random.default_rng(seed)
+
+        # Stochastic states
+        self.U_slow = 0.0
+        self.beta_slow = 0.0
+
+        # Wind Coefficient table    
+        self.alpha_deg, self.C6 = load_wind_coefficients()
+
+        self.random_generator = np.random.default_rng(seed)
+
+        # Gust params
+        self.gust_init()
+
+    def gust_init(self):
+
+        if not self.gust:
+            self.gust_frequencies = np.array([])
+            self.U_gi = np.array([])
+            self.gust_phases = np.array([])
+            return
+
+        params = self.gust_params
+
+        self.spectrum_type = str(params.get("spectrum_type", "NORSOK")).upper()
+        if self.spectrum_type not in ("NORSOK", "HARRIS"):
+            raise ValueError("Spectrum type must be 'NORSOK' or 'HARRIS'!")
+
+        # gust parameters
+        n_components = int(params.get("n_components", 100))
+        f_min = float(params.get("f_min", 0.001))
+        f_max = float(params.get("f_max", 1.0))
+
+        # 10 m standard for NORSOK
+        self.elevation = int(params.get("elevation", 10))
+
+        self.L = float(params.get("L", 1800.0))
+        self.kappa = float(params.get("kappa", 0.0026))
+
+        # Check valid components
+        if n_components < 1:
+            raise ValueError("Number of frequency components 'n_components' must be greater than 0!")
+        if f_min <= 0 or f_min >= f_max:
+            raise ValueError("f_min is less or equal to zero or equal or greater than f_max")
+
+        # Frequency bins
+        # Remember we talk in bins, NOT components. Hence, bins = n_components + 1
+        bins = np.linspace(f_min, f_max, n_components + 1)
+        # Centre frequencies = (lower + upper) / 2
+        self.gust_frequencies = (bins[:-1] + bins[1:])
+        df = np.diff(bins)
+
+        S = self.wind_spectrum(self.gust_frequencies)
+
+        self.U_g = np.sqrt(2 * S * df)
+
+        self.gust_phases = self.random_generator.uniform(0.0, 2.0 * np.pi, size=n_components)
+
+
+    def wind_spectrum(self, f: np.ndarray) -> np.ndarray:
+        S = 0
+        U10 = self.mean_speed
+
+        if self.spectrum_type == "HARRIS":
+            S = (4 * self.kappa * self.L * U10 / (2 + f * self.L / U10)**(5/3))
+
+        elif self.spectrum_type == "NORSOK":
+            # NORSOK spectrum with elevation z and frequency f
+            # Defined p. 115 in Marine Cybernetics
+            n = 0.468
+            x = 172 * f * (self.elevation / 10)**(2/3) * (U10/10)**(-3/4)
+            S = 320.0 * (U10 / 10.0) ** 2 * (self.elevation/10) ** 0.45 / (1.0 + x**n) ** (5.0 / (3.0 * n))
+
+        else:
+            raise RuntimeError("Unknown type of wind spectrum!")
+
+        return S
+
+    def gust_speed(self, t: float) -> float:
+        if not self.gust:
+            return 0.0
+
+        return float(np.sum(self.U_g * np.cos(2 * np.pi * self.gust_frequencies * t + self.gust_phases)))
+
+    def update_slow_speed(self, dt: float):
+
+        if self.sigma_slow == 0.0:
+            self.U_slow = 0.0
+            return
+
+         w = self.random_generator.normal(0,1)
+        self.U_slow += (-self.U_slow / self.tau_slow * dt + np.sqrt(2*self.sigma_slow**2 / self.tau_slow * dt) * w)
+
+    def update_slow_direction(self, dt: float):
+
+        if self.sigma_dir == 0.0 or self.dir_limit == 0.0:
+            self.beta_slow = 0.0
+            return
+
+        w = self.random_generator.normal()
+
+        # Gauss-Markov principle to go back to origin + standard deviation in direction of gust amplitude
+        self.beta_slow += (
+            -self.beta_slow / self.tau_dir * dt
+            + self.sigma_dir
+            * np.sqrt(2.0 * dt / self.tau_dir)
+            * w
+        )
+
+        # Maximum +/- 5 degree
+        if self.beta_slow > self.dir_limit:
+            self.beta_slow = self.dir_limit
+        elif self.beta_slow < -self.dir_limit:
+            self.beta_slow = -self
 
     def step(
         self,
@@ -146,17 +263,24 @@ class Wind:
     ) -> Tuple[np.ndarray, Dict[str, float]]:
         psi = eta[5]
 
-        # Slowly varying wind
-        w = self.random_generator.normal(0,1)
-        self.U_slow += (-self.U_slow / self.tau_slow * dt + np.sqrt(2*self.sigma_slow**2 / self.tau_slow * dt) * w)
+        # Slowly varying wind components
+        self.update_slow_speed(dt)
+        self.update_slow_direction(dt)
+
+        # Ambient wind speed and direction
+        U_mean = self.mean_speed + self.U_slow
+        U_gust = self.gust_speed(t)
 
         # Complete Wind Speed
-        U_w = self.mean_speed + self.U_slow
+        U_w = U_mean + U_gust
+
+        # Include slow wind direction
+        beta_ned = (self.beta + self.beta_slow) % (2 * np.pi)
 
         # Wind components in NED
         V_w = np.array([
-            [U_w * np.cos(self.beta)],
-            [U_w * np.sin(self.beta)]
+            [U_w * np.cos(beta_ned)],
+            [U_w * np.sin(beta_ned)]
         ])
 
         # Relative wind
@@ -174,10 +298,9 @@ class Wind:
         alpha_rw = alpha_rw % (2*np.pi)
         alpha_rw_deg = np.rad2deg(alpha_rw) # index to use in table
 
-        # Wind Coefficient table    
-        alpha_deg, C6 = load_wind_coefficients()
+        # Wind coefficients
         C_w = np.array([
-            np.interp(alpha_rw_deg, alpha_deg, C6[:, i])
+            np.interp(alpha_rw_deg, self.alpha_deg, self.C6[:, i])
             for i in range(6)
         ])
 
@@ -185,6 +308,6 @@ class Wind:
         tau_w6 = np.zeros(6)
         tau_w6 = U_rw**2 * C_w
         
-        info = {"U": 0.0, "beta_ned": 0.0, "alpha_body": 0.0,
-                "U_mean": 0.0, "U_gust": 0.0}
+        info = {"U": float(U_w), "beta_ned": float(beta_ned), "alpha_body": float(alpha_rw),
+                "U_mean": float(U_mean), "U_gust": float(U_gust)}
         return tau_w6, info
