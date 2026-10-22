@@ -99,9 +99,9 @@ class KalmanFilterObserver(Observer):
         with open(str(pkl), "rb") as f:
             data = pickle.load(f)
         M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
-        M = np.diag(np.diag(M_RB + M_A))
+        M = M_RB + M_A
         self.M_inv = np.linalg.inv(M)
-        self.damping = np.diag(np.diag(Dl))
+        self.damping = Dl
 
         # Estimated(guessed) model parameters
         self.wave_wn = np.array([0.8, 0.8, 0.8])
@@ -129,7 +129,7 @@ class KalmanFilterObserver(Observer):
         )   # Model noise matrix
         self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Measurement noise matrix
 
-        Cw = np.hstack([self.I3, self.I3]) # Linear wave response
+        Cw = np.hstack([self.Z3, self.I3]) # Linear wave response
         self.H = np.hstack([Cw, self.I3, self.Z3, self.Z3])
         E_w = np.block([
             [self.Z3],
@@ -161,6 +161,13 @@ class KalmanFilterObserver(Observer):
         )
         self.x = np.zeros((self.n, 1), dtype=float)
         self.x[6:9, 0] = [eta0[0], eta0[1], eta0[5]]
+        self.P = np.diag([
+            0.25, 0.25, np.deg2rad(0.25)**2,
+            0.04, 0.04, np.deg2rad(0.05)**2,
+            1e-4, 1e-4, np.deg2rad(0.05)**2,
+            0.25, 0.25, 0.01,
+            1e6, 1e6, 1e8,
+        ])
 
     def _continuous_dynamics(
         self, x: np.ndarray, tau_body: np.ndarray,
@@ -168,7 +175,7 @@ class KalmanFilterObserver(Observer):
         eta = x[6:9]
         nu = x[9:12]
         bias_ned = x[12:15]
-        J = Rz(float(eta[2]))
+        J = Rz(eta[2])
 
         return np.concatenate((
             self.A_w @ x[:6],
