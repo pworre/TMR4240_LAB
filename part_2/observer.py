@@ -29,6 +29,7 @@ from importlib.resources import files
 from scipy.differentiate import jacobian
 from models.sensors import SENSOR_ETA_STD
 from simulation.utils import Rz, wrap_angle_pi
+import cvxpy as cp
 
 
 @dataclass
@@ -70,13 +71,241 @@ class NonlinearPassiveObserver(Observer):
 
     name = "nonlinear_passive"
 
-    def __init__(self, *args, **kwargs):
-        pass
 
+
+    def __init__(self, *args, **kwargs):
+        #First, loading vessel data
+        pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
+        with open(str(pkl), "rb") as f:
+            data = pickle.load(f)
+
+
+        #Defining identity matrix and zero matrix
+        self.I3 = np.eye(3)
+        self.Z3 = np.zeros((3,3))
+        
+        #Defining states for the NPO
+        self.xi_hat = np.zeros(6)
+        self.eta_hat = np.zeros(3)
+        self.nu_hat = np.zeros(3)
+        self.bias_hat = np.zeros(3)
+
+
+        #Tuneable parameters
+        self.T_b = np.diag([1000.0, 1000.0, 1000.0])
+        self.T_b_inv = np.linalg.inv(self.T_b)
+
+        self.w_w = 2 * np.pi / 8.0  # Eksempel: bølgeperiode 8 s
+        self.zeta_w = 0.1
+        self.zeta_n = 1.0
+        self.w_c = 1.0
+
+
+        delta_zeta = self.zeta_n - self.zeta_w
+
+        k1 = -2 * delta_zeta * self.w_c / self.w_w
+        k4 = 2 * self.w_w * delta_zeta
+        k7 = self.w_c
+
+
+        #Correction gains
+        self.K1 = np.vstack([
+            k1 * self.I3,
+            k4 * self.I3
+        ])
+
+        self.K2 = k7 * self.I3
+
+        self.K3 = -0.01 * self.I3
+
+        self.K4 = np.diag([
+            100000.0,
+            100000.0,
+            10000000.0
+        ])
+        
+        self.A_w = np.block([
+        [self.Z3, self.I3],
+        [(-(self.w_w**2)*self.I3), (-2*self.zeta_w*self.w_w)*self.I3]
+        ])
+
+        self.E_w = np.vstack([self.Z3, self.I3])
+        self.C_w = np.hstack([self.Z3, self.I3])
+
+        M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
+        M = np.diag(np.diag(M_RB + M_A))
+
+        self.M_inv = np.linalg.inv(M)
+        self.D = np.diag(np.diag(Dl))
+
+        self.reset()
+
+    def passivity_matrices(self):
+        A_o = np.block([
+            [self.A_w - self.K1 @ self.C_w, -self.K1, np.zeros((6,3))],
+            [-self.K2 @ self.C_w, -self.K2, self.Z3],
+            [-self.K3 @ self.C_w, -self.K3, -self.T_b_inv]
+        ])
+
+        B_o = np.vstack([
+            np.zeros((6, 3)),
+            self.I3,
+            self.Z3
+        ])
+
+        C_o = np.hstack([
+            self.K4 @ self.C_w,
+            self.K4,
+            -self.I3
+        ])
+
+        return A_o, B_o, C_o
+
+    def check_passivity(self, eps=1e-7):
+        import cvxpy as cp
+
+        A, B, C = self.passivity_matrices()
+        n = A.shape[0]
+
+        # 1. Check Hurwitz stability
+        eigenvalues = np.linalg.eigvals(A)
+        hurwitz = np.all(np.real(eigenvalues) < 0)
+
+        print(f"Hurwitz: {hurwitz}")
+        print(f"Largest real eigenvalue: {np.max(np.real(eigenvalues)):.6f}")
+
+        if not hurwitz:
+            print("Passivity check failed: A is not Hurwitz.")
+            return False
+
+        # 2. Find a symmetric positive definite P
+        P = cp.Variable((n, n), symmetric=True)
+
+        constraints = [
+            P >> eps * np.eye(n),
+            A.T @ P + P @ A << -eps * np.eye(n),
+            B.T @ P == C
+        ]
+
+        problem = cp.Problem(cp.Minimize(0), constraints)
+        problem.solve(
+            solver=cp.SCS,
+            eps=1e-8,
+            max_iters=100000
+        )
+
+        if problem.status not in ("optimal", "optimal_inaccurate"):
+            print(f"KYP feasibility failed: {problem.status}")
+            return False
+
+        # 3. Verify the numerical solution
+        P_val = P.value
+        Q_val = -(A.T @ P_val + P_val @ A)
+
+        min_eig_P = np.min(np.linalg.eigvalsh(P_val))
+        min_eig_Q = np.min(np.linalg.eigvalsh(Q_val))
+        residual = np.linalg.norm(B.T @ P_val - C)
+
+        print(f"Minimum eigenvalue of P: {min_eig_P:.3e}")
+        print(f"Minimum eigenvalue of Q: {min_eig_Q:.3e}")
+        print(f"KYP equality residual: {residual:.3e}")
+
+        verified = (
+            min_eig_P > eps
+            and min_eig_Q > eps
+            and residual < 1e-6
+        )
+
+        print(f"KYP numerical check passed: {verified}")
+
+        return verified
+
+    
+    @staticmethod
+    def J(psi):
+        return np.array([
+                [np.cos(psi), -np.sin(psi), 0],
+                [np.sin(psi), np.cos(psi), 0],
+                [0,0,1]
+                    ])
+
+    def reset(self, eta0=None):
+        self.xi_hat = np.zeros(6)
+
+        if eta0 is not None:
+            eta0 = np.asarray(eta0, dtype=float).reshape(6)
+            self.eta_hat = eta0[[0, 1, 5]].copy()
+        else:
+            self.eta_hat = np.zeros(3)
+
+        self.nu_hat = np.zeros(3)
+        self.bias_hat = np.zeros(3)
+        
     def step(self, t, dt, eta_measured, tau_est):
         # TODO: implement the nonlinear passive observer.
-        return self._placeholder(eta_measured)
 
+        self.y_m = eta_measured[[0, 1, 5]]
+        self.y_hat = self.eta_hat + self.C_w@self.xi_hat 
+         
+        self.y_tilde = self.y_m - self.y_hat
+        self.y_tilde[2] = wrap_angle_pi(self.y_tilde[2])
+
+
+        psi_hat = self.eta_hat[2]
+
+        J_hat = self.J(psi_hat)
+
+        tau_3dof = tau_est[[0, 1, 5]]
+
+        damping = -self.D @ self.nu_hat
+        bias_force = J_hat.T @ self.bias_hat
+        correction = J_hat.T @ self.K4 @ self.y_tilde
+
+        # Diagnostic logging every 100 seconds
+        if abs(t - round(t / 100) * 100) < dt / 2:
+            print(f"\n--- Time: {t:.1f} s ---")
+
+            print("Innovation [N, E, psi]:", self.y_tilde)
+            print("Bias estimate (NED):", self.bias_hat)
+            print("Bias derivative:", -self.T_b_inv @ self.bias_hat
+                + self.K3 @ self.y_tilde)
+
+            print("Bias force (body):", bias_force)
+            print("Correction force (body):", correction)
+            print("Damping force (body):", damping)
+            print("Controller force (body):", tau_3dof)
+
+            print("Estimated velocity:", self.nu_hat)
+
+        self.xi_dot_hat = self.A_w @ self.xi_hat + self.K1 @ self.y_tilde
+
+        self.eta_dot_hat = self.J(psi_hat) @ self.nu_hat + self.K2 @ self.y_tilde
+
+        self.nu_dot_hat = self.M_inv @ (-self.D @ self.nu_hat + self.J(psi_hat).T @ self.bias_hat + tau_est[[0,1,5]] + self.J(psi_hat).T @ self.K4 @ self.y_tilde)
+        
+        self.bias_dot_hat = -self.T_b_inv@self.bias_hat + self.K3 @ self.y_tilde
+
+
+        self.xi_hat += dt * self.xi_dot_hat
+        self.eta_hat += dt * self.eta_dot_hat
+        self.nu_hat += dt * self.nu_dot_hat
+        self.bias_hat += dt * self.bias_dot_hat
+
+        self.eta_hat[2] = wrap_angle_pi(self.eta_hat[2])
+
+        eta_out = np.zeros(6)
+        nu_out = np.zeros(6)
+        bias_out = np.zeros(6)
+
+        eta_out[[0, 1, 5]] = self.eta_hat
+        nu_out[[0, 1, 5]] = self.nu_hat
+        bias_out[[0, 1, 5]] = self.bias_hat
+
+        return ObserverEstimate(
+            eta=eta_out,
+            nu=nu_out,
+            bias=bias_out
+        )
 
 class KalmanFilterObserver(Observer):
     """Template for a discrete KF/EKF observer.
@@ -249,3 +478,9 @@ def select_observer(kind: str, **kwargs) -> Observer:
         return choices[kind](**kwargs)
     except KeyError as exc:
         raise ValueError(f"observer_type must be one of {tuple(choices)}") from exc
+
+
+
+observer = NonlinearPassiveObserver()
+observer.check_passivity()
+
