@@ -71,7 +71,7 @@ SEED = 123
 # there first, then set this to "nonlinear_passive" or "kalman" and justify
 # the choice in the report.  It is None until you choose: every preset that
 # needs it stops with a message instead of picking one for you.
-SELECTED_OBSERVER = None
+SELECTED_OBSERVER = 'kalman'
 
 # Initial observer error used by the convergence demonstration in Part 2,
 # Simulation 4.  The engine resets every observer at the TRUE initial pose, so
@@ -80,7 +80,7 @@ SELECTED_OBSERVER = None
 # choose your own, and say in the report what it is and why it is a fair test.
 OBSERVER_OFFSET = np.array([5.0, -5.0, 0.0, 0.0, 0.0, np.deg2rad(10.0)])
 
-SCENARIO = "sim2"          # default scenario when run without arguments
+SCENARIO = "sim4"          # default scenario when run without arguments
 
 
 # ---------------------------------------------------------------------------

@@ -107,7 +107,7 @@ class KalmanFilterObserver(Observer):
         self.wave_wn = np.array([0.8, 0.8, 0.8])
         self.wave_zeta = np.array([0.1, 0.1, 0.1])
         self.bias_tau = np.array([300, 300, 300])
-
+        # Sigma 0.07 below w_0, 0.09 above w_0
         # Model and measurement noise
         self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2]) # should be covariance of W_w 
         # The covariance Q1 is estimated together with the parameters of the WF motion model from data measured 
