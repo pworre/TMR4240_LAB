@@ -90,55 +90,56 @@ class KalmanFilterObserver(Observer):
 
     def __init__(self, *args, **kwargs):
         # Utility
-        self.n = 15
-        self.m = 3
-        self.I3 = np.eye(3)
-        self.Z3 = np.zeros((3,3))
+        self.n = 15                     # Total dimension number
+        self.I3 = np.eye(3)             # 3x3 identity matrix
+        self.Z3 = np.zeros((3,3))       # 3x3 zero matrix
 
         # Load vessel data
         pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
         with open(str(pkl), "rb") as f:
             data = pickle.load(f)
         M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
-        M = np.diag(np.diag(M_RB + M_A))
+        M = M_RB + M_A
         self.M_inv = np.linalg.inv(M)
-        self.damping = np.diag(np.diag(Dl))
+        self.damping = Dl
 
         # Estimated(guessed) model parameters
-        self.wave_wn = np.full(3, 0.8, dtype=float)
-        self.wave_zeta = np.full(3, 0.1, dtype=float)
-        self.bias_tau = np.full(3, 300.0, dtype=float)
-
+        self.wave_wn = np.array([0.8, 0.8, 0.8])
+        self.wave_zeta = np.array([0.1, 0.1, 0.1])
+        self.bias_tau = np.array([300, 300, 300])
+        # Sigma 0.07 below w_0, 0.09 above w_0
         # Model and measurement noise
-        self.q_wave_accel = np.array(
-            [0.02**2, 0.02**2, np.deg2rad(0.02)**2],
-            dtype=float,
-        )
-        self.q_force = 0.5 * np.array(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
-        self.q_bias = np.array(
-            [100.0**2, 100.0**2, 200.0**2],
-            dtype=float,
-        )
+        self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2]) # should be covariance of W_w 
+        # The covariance Q1 is estimated together with the parameters of the WF motion model from data measured 
+        # before and during the operation of the craft.
+
+        self.q_force = 0.5 * np.array(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Should be covariance of W_b. Usually diagonal. 
+        # The entries of the matrix Q2 are taken as a fraction of the variance of the position measurement noises
+
+        self.q_bias = np.array([100.0**2, 100.0**2, 200.0**2]) # Should be covariance of W_3. 0? Usually diagonal.
+        # The entries of Q3 are high values. These choices provide a filter with an appropriate
+        # balance of the uncertainty in various parts of the model
+
         self.Q = np.diag(
             np.concatenate([
                 self.q_wave_accel,
                 self.q_force,
                 self.q_bias,
             ])
-        )
-        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2)
+        )   # Model noise matrix
+        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Measurement noise matrix
 
-        Cw = np.hstack([self.I3, self.I3])
-        self.H = np.hstack([Cw, self.I3, np.zeros((3, 6))])
+        Cw = np.hstack([self.Z3, self.I3]) # Linear wave response
+        self.H = np.hstack([Cw, self.I3, self.Z3, self.Z3])
         E_w = np.block([
             [self.Z3],
             [self.I3]
         ])
-        self.G = np.block([
+        self.E = np.block([
             [E_w, np.zeros((6, 6))],
-            [np.zeros((3, 9))],
+            [self.Z3, self.Z3, self.Z3],
             [self.Z3, self.M_inv, self.Z3],
-            [np.zeros((3, 6)), self.I3],
+            [self.Z3, self.Z3, self.I3],
         ])
         self.A_w = np.block([
             [self.Z3,           self.I3],
@@ -160,6 +161,13 @@ class KalmanFilterObserver(Observer):
         )
         self.x = np.zeros((self.n, 1), dtype=float)
         self.x[6:9, 0] = [eta0[0], eta0[1], eta0[5]]
+        self.P = np.diag([
+            0.25, 0.25, np.deg2rad(0.25)**2,
+            0.04, 0.04, np.deg2rad(0.05)**2,
+            1e-4, 1e-4, np.deg2rad(0.05)**2,
+            0.25, 0.25, 0.01,
+            1e6, 1e6, 1e8,
+        ])
 
     def _continuous_dynamics(
         self, x: np.ndarray, tau_body: np.ndarray,
@@ -167,7 +175,7 @@ class KalmanFilterObserver(Observer):
         eta = x[6:9]
         nu = x[9:12]
         bias_ned = x[12:15]
-        J = Rz(float(eta[2]))
+        J = Rz(eta[2])
 
         return np.concatenate((
             self.A_w @ x[:6],
@@ -196,20 +204,20 @@ class KalmanFilterObserver(Observer):
         ).df
         
         # Discretize
-        F = np.eye(self.n) + dt * A
-        Q_d = dt * self.G @ self.Q @ self.G.T
+        F = np.eye(self.n) + dt * A # First order Euler
+        Q_d = dt * self.E @ self.Q @ self.E.T
 
         # Prediction
-        x_pred = self.x + dt * f
-        x_pred[8, 0] = wrap_angle_pi(float(x_pred[8, 0]))
-        P_pred = F @ self.P @ F.T + Q_d
+        x_pred = self.x + dt * f        # First order Euler method with non-linear f
+        x_pred[8, 0] = wrap_angle_pi(float(x_pred[8, 0])) # Wrap heading
+        P_pred = F @ self.P @ F.T + Q_d # Update predictor with linearized(dicretized) f
 
         # Finding prediction error
         y = np.array(
             [eta_measured[0], eta_measured[1], eta_measured[5]],
             dtype=float,
-        ).reshape(self.m, 1)
-        z = y - self.H @ x_pred
+        ).reshape(3, 1) # Measurements
+        z = y - self.H @ x_pred # Prediction error(Innovation)
         z[2, 0] = wrap_angle_pi(float(z[2, 0]))
 
         S = self.H @ P_pred @ self.H.T + self.R
@@ -220,7 +228,6 @@ class KalmanFilterObserver(Observer):
         self.x[8, 0] = wrap_angle_pi(float(self.x[8, 0]))
         I_KH = np.eye(self.n) - K @ self.H
         self.P = I_KH @ P_pred @ I_KH.T + K @ self.R @ K.T
-        self.P = 0.5 * (self.P + self.P.T)
 
         # Return final values
         eta_est = np.zeros(6, dtype=float)
