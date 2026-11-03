@@ -35,7 +35,8 @@ from part_2.current import Current
 from part_2.observer import select_observer
 from simulation.plotter_part_2 import (plot_observer, plot_observer_error,
                                        plot_thruster_setpoints, plot_waves,
-                                       plot_wind_field, plot_wrench_residual)
+                                       plot_wind_field, plot_wrench_residual,
+                                       plot_observer_motions)
 from part_2.reference import ReferenceModel
 from part_2.thrust_allocation import ThrustAllocator
 from models.waves import Waves
@@ -238,19 +239,19 @@ def sim4():
     out = {}
     fixed = WrenchSequence([(1.0, [2e3, 2e3, 2e3])])
     variants = (("with waves", dict(waves=True)), ("without waves", dict(waves=False)))
-    for kind in ("nonlinear_passive", "kalman"):
-        for label, env_kw in variants:
-            cfg = Part2SimConfig(dt=DT, T=600.0, use_reference=False, use_observer=True,
-                                 observer_type=kind)
-            logs = run(cfg, np.zeros(6), environment(**env_kw), controller=fixed)
-            plot_observer(logs).suptitle(f"Observer {kind}, {label}")
-            plot_observer_error(logs).suptitle(f"Observer {kind}, {label} — estimation errors")
-            out[(kind, label)] = logs
+    kind = "kalman"
+    for label, env_kw in variants:
+        cfg = Part2SimConfig(dt=DT, T=200.0, use_reference=False, use_observer=True,
+                                observer_type=kind, bypass_actuators=True)
+        logs = run(cfg, np.zeros(6), environment(**env_kw), controller=fixed)
+        plot_observer_motions(logs).suptitle(f"Observer {kind}, {label}")
+        plot_observer(logs).suptitle(f"Observer {kind}, {label}")
+        plot_observer_error(logs).suptitle(f"Observer {kind}, {label} — estimation errors")
+        out[(kind, label)] = logs
     # Convergence: start the estimate away from the truth (the engine resets it
     # ON the truth), then watch the error decay.  Quote the convergence time.
-    for kind in ("nonlinear_passive", "kalman"):
         cfg = Part2SimConfig(dt=DT, T=300.0, use_reference=False, use_observer=True,
-                             observer_type=kind)
+                             observer_type=kind, bypass_actuators=True)
         sim = make_sim(cfg, fixed)
         sim.reset_state()
         sim.observer.reset(OBSERVER_OFFSET)
@@ -273,8 +274,8 @@ def sim4():
         return out
     # Closed loop: does the selected observer improve the DP system?
     for label, use_obs in (("raw measurements", False), (f"observer {selected_observer()}", True)):
-        cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=use_obs,
-                             observer_type=selected_observer())
+        cfg = Part2SimConfig(dt=DT, T=200.0, use_observer=use_obs,
+                             observer_type=selected_observer(), bypass_actuators=True)
         logs = run(cfg, np.zeros(6), environment())
         standard_plots(logs, setpoints=True, observer=use_obs)
         plt.gcf().suptitle(f"Closed loop — {label}")
