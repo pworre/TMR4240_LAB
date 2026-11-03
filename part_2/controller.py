@@ -133,10 +133,9 @@ class DPController:
         e_nu = J.T @ nu_ref_3dof - nu_3dof
 
         # Control law
-        [Fx, Fy, Mz] = J.T @ (
-        self.Kp @ e_eta
-        + self.Ki @ self.int
-        ) + self.Kd @ e_nu
+        [Fx, Fy, Mz] = self.Kp @ J.T @ e_eta
+        + self.Ki @ J.T @ self.int
+        + self.Kd @ e_nu
 
         # Euler's method (k+1)
         self.int += dt * e_eta # position tracking error
