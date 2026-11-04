@@ -74,6 +74,7 @@ class DPController:
             1 - 2*np.pow(self.zeta, 2) + np.sqrt(
                 4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
         )); # Closed-loop natural frequency [rad/s]
+        self.wn = 2 * np.array([0.495, 0.561, 0.495])
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
