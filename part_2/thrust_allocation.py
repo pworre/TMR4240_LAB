@@ -77,6 +77,10 @@ class ThrustAllocator:
             #print("Fallback to part 1 allocation")
             u_cmd, alpha_cmd, B_e, tau_achieved, model = allocate_part_1(tau_d, u_now, alpha_now, self)
         data_extraction(tau_achieved, tau_d, model, t)
+        ok=dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self ,t, model)
+
+
+        #TODO clip numerical solutions to exact limits
         return u_cmd, alpha_cmd
 
 def data_extraction(tau_achieved, tau_d, model, t):
@@ -177,8 +181,8 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
         #wrap angles to [-pi, pi]
         alpha_cmd = np.array([alpha_now[0], alpha_now[1] + res[3], alpha_now[2] + res[4]])
         alpha_cmd = np.arctan2(np.sin(alpha_cmd), np.cos(alpha_cmd))
-        if feasible(u_cmd, 1e-6, self): #rate limit check TODO: add rate limit check
-            return u_cmd, alpha_cmd, tau_achieved, True
+        if feasible(u_cmd, 1e-6, self):
+            return u_cmd, alpha_cmd, tau_achieved, True #solution found and feasible
         else:
             return u_cmd, alpha_cmd, tau_achieved, False
 
@@ -256,14 +260,14 @@ def allocate_part_1(tau_d, u_now, alpha_now, self):
 
 
 
-def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self):
+def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self,t, model): #returns true if rate limits are passed
     #check if rotation rate is ok:
     if self.thrusters[1].rot_speed<np.abs((alpha_cmd[1]-alpha_now[1])/dt) or self.thrusters[2].rot_speed<np.abs((alpha_cmd[2]-alpha_now[2])/dt):
-        print("Azimuth rotation speed exceeded!")
+        print(f"Azimuth rotation speed exceeded at time {t} model {model}, delta alpha1: {np.abs((alpha_cmd[1]-alpha_now[1])/dt)}, delta alpha2: {np.abs((alpha_cmd[2]-alpha_now[2])/dt)}")
         return False
     #thruster rate limit check:
     if self.thrusters[0].u_rate<np.abs((u_cmd[0]-u_now[0])/dt) or self.thrusters[1].u_rate<np.abs((u_cmd[1]-u_now[1])/dt) or self.thrusters[2].u_rate<np.abs((u_cmd[2]-u_now[2])/dt):
-        print("Thruster rate limit exceeded!")
+        print(f"Thruster rate limit exceeded at time {t}, model {model}")
         return False
     return True
 
