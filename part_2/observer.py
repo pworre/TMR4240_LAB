@@ -143,25 +143,6 @@ class KalmanFilterObserver(Observer):
             [self.Z3,           self.I3],
             [-np.diag(self.wave_wn**2), -np.diag(2.0 * self.wave_zeta * self.wave_wn)],
         ])
-        # Stationary variances for the wave oscillator and decaying bias
-        # states, using the continuous-time noise intensities above.
-        wave_pose_var = self.q_wave_accel / (
-            4.0 * self.wave_zeta * self.wave_wn**3
-        )
-        wave_rate_var = self.q_wave_accel / (
-            4.0 * self.wave_zeta * self.wave_wn
-        )
-        bias_var = 0.5 * self.q_bias * self.bias_tau
-
-        # reset() is given the true initial pose. Velocity is not passed to the
-        # observer, so retain a deliberately broad prior for that state.
-        #self.P0 = np.diag(np.concatenate((
-        #    wave_pose_var,
-        #    wave_rate_var,
-        #    np.zeros(3),
-        #    np.array([0.25, 0.25, 0.01]),
-        #    bias_var,
-        #)))
         self.P0 = np.diag([
             0.25, 0.25, np.deg2rad(0.25)**2, #WF
             0.04, 0.04, np.deg2rad(0.05)**2, #WF
@@ -218,14 +199,10 @@ class KalmanFilterObserver(Observer):
         # Discretize
         F = np.eye(self.n) + dt * A # First order Euler
         Q_d = dt * self.E @ self.Q @ self.E.T
-        # Gamma = dt * self.E
 
         # Prediction
-        # From book attempt:
         x_pred = self.x + dt * f        # First order Euler method with non-linear f
         x_pred[8, 0] = wrap_angle_pi(float(x_pred[8, 0])) # Wrap heading
-        # From book: p.299 Fossen
-        # P_pred = F @ self.P @ F.T + Gamma @ self.Q @ Gamma.T  # Sligthly worse on check.py test
         P_pred = F @ self.P @ F.T + Q_d # Update predictor with linearized(dicretized) f
 
         # Finding prediction error
