@@ -76,6 +76,7 @@ class DPController:
         T_b = np.array([40, 20, 30]) # Bandwidth time constants
         w_b = 2 * np.pi / T_b # Bandwidth frecuencies
         self.zeta = 1.0              # Relative damping factors
+        # self.wn = 2 * np.array([0.495, 0.561, 0.495]) # Natural frequencies from open loop crossover frequencies.
         self.wn = w_b / np.sqrt(
             1 - 2*np.pow(self.zeta, 2) + np.sqrt(
                 4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
@@ -132,10 +133,8 @@ class DPController:
         e_nu = J.T @ nu_ref_3dof - nu_3dof
 
         # Control law
-        [Fx, Fy, Mz] = J.T @ (
-        self.Kp @ e_eta
-        + self.Ki @ self.int
-        ) + self.Kd @ e_nu
+        Fx, Fy, Mz = self.Kp @ J.T @ e_eta + self.Ki @ J.T @ self.int + self.Kd @ e_nu
+
 
         # Euler's method (k+1)
         self.int += dt * e_eta # position tracking error
@@ -143,7 +142,7 @@ class DPController:
         # Return computed tau_d
         tau_d = np.zeros(6)
         tau_d[[0, 1, 5]] = Fx, Fy, Mz
-
+        print(tau_d)
         self.tau_cmd = tau_d.copy()
         if np.any(np.isnan(tau_d)):
             tau_d = np.zeros(6)

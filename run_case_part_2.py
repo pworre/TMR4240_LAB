@@ -87,6 +87,11 @@ SCENARIO = "sim2"          # default scenario when run without arguments
 # Building blocks
 # ---------------------------------------------------------------------------
 
+with open("allocator_results.csv", "w") as f:
+    f.write(
+        "model,Fx_d,Fy_d,Mz_d,Fx_a,Fy_a,Mz_a,\n"
+    )
+
 def selected_observer() -> str:
     """The observer you chose in Part 2, Simulation 4 (``SELECTED_OBSERVER``).
 
