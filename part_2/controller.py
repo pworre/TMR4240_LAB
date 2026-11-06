@@ -71,15 +71,16 @@ class DPController:
             data = pickle.load(f)
         M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
         M = M_RB + M_A
-        M_diag = np.diag(M)[:3]
-        D_diag = np.diag(Dl)[:3]
-        T_b = np.array([40, 20, 30]) # Bandwidth time constants
-        w_b = 2 * np.pi / T_b # Bandwidth frecuencies
-        self.zeta = 1.0              # Relative damping factors
+        M_diag = np.diag(M)
+        D_diag = np.diag(Dl)
+        T_b = np.array([45, 45, 45])                # Bandwidth time constants
+        w_b = 2 * np.pi / T_b                       # Bandwidth frecuencies
+        self.zeta = np.array([1.0, 1.0, 1.0])       # Closed-loop relative damping ratios 
         self.wn = w_b / np.sqrt(
-            1 - 2*np.pow(self.zeta, 2) + np.sqrt(
-                4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
-        )); # Closed-loop natural frequency [rad/s]
+            1 - 2*self.zeta**2 + np.sqrt(
+                4*self.zeta**4 - 4*self.zeta**2 + 2
+        ));                                         # Closed-loop natural frequencies (rad/s)
+        #self.wn = 2 * np.array([0.495, 0.561, 0.495]) # Natural frequencies from open loop crossover frequencies.
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
@@ -132,10 +133,7 @@ class DPController:
         e_nu = J.T @ nu_ref_3dof - nu_3dof
 
         # Control law
-        [Fx, Fy, Mz] = J.T @ (
-        self.Kp @ e_eta
-        + self.Ki @ self.int
-        ) + self.Kd @ e_nu
+        Fx, Fy, Mz = self.Kp @ J.T @ e_eta + self.Ki @ J.T @  self.int + self.Kd @ e_nu
 
         # Euler's method (k+1)
         self.int += dt * e_eta # position tracking error

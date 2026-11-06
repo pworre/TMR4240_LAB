@@ -34,15 +34,21 @@ Optional hooks the simulator will use IF you define them (safe to omit):
     apply_external_aw(tau_applied, psi, dt)  — anti-windup with the (6,)
                                                wrench actually applied after
                                                allocation and the actuator
-                                               model (ideal in Part 1)
+                                               model.  Unlike Part 1, the
+                                               Part 2 actuators saturate and
+                                               rate-limit by default, so the
+                                               applied wrench really does
+                                               differ from the demanded one.
     last_pid_body  : {"P","I","D"} -> (6,) BODY components   (logged)
     int_ned (2,), int_psi (float)            — integrator states (logged)
 
-Constructor contract — the automated checks (``python check.py``, ``pytest``,
-``notebooks/part_1_demo.ipynb``) construct your controller as
-``DPController()`` with NO arguments, so your final tuned gains must be the
-constructor defaults. Tuning only inside ``run_case_part1.py`` will pass your
-own runs but fail the checks.
+Constructor contract — the automated checks (``python check.py --part 2``,
+``pytest``) build your controller with no arguments:
+
+    DPController()
+
+so your final tuned gains must be the ``__init__`` defaults.  Gains set only
+in ``run_case_part_2.py`` reach your own runs but not the checks.
 """
 import numpy as np
 import pickle
@@ -67,13 +73,14 @@ class DPController:
         M = M_RB + M_A
         M_diag = np.diag(M)[:3]
         D_diag = np.diag(Dl)[:3]
-        T_b = np.array([40, 20, 30]) # Bandwidth time constants
+        T_b = np.array([45, 45, 45]) # Bandwidth time constants
         w_b = 2 * np.pi / T_b # Bandwidth frecuencies
-        self.zeta = 1.0              # Relative damping factors
+        self.zeta = np.array([1.0, 1.0, 1.0])              # Relative damping factors
         self.wn = w_b / np.sqrt(
             1 - 2*np.pow(self.zeta, 2) + np.sqrt(
                 4*np.pow(self.zeta, 4) - 4*np.pow(self.zeta, 2) + 2
         )); # Closed-loop natural frequency [rad/s]
+        #self.wn = 2 * np.array([0.495, 0.561, 0.495]) # Natural frequencies from open loop crossover frequencies.
         # PID Gains
         self.Kp = np.diag(M_diag * self.wn**2)
         self.Kd = np.diag(2 * self.zeta * self.wn * M_diag - D_diag)
@@ -126,10 +133,7 @@ class DPController:
         e_nu = J.T @ nu_ref_3dof - nu_3dof
 
         # Control law
-        [Fx, Fy, Mz] = J.T @ (
-        self.Kp @ e_eta
-        + self.Ki @ self.int
-        ) + self.Kd @ e_nu
+        Fx, Fy, Mz = self.Kp @ J.T @ e_eta + self.Ki @ J.T @  self.int + self.Kd @ e_nu
 
         # Euler's method (k+1)
         self.int += dt * e_eta # position tracking error
