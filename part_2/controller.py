@@ -142,7 +142,7 @@ class DPController:
         # Return computed tau_d
         tau_d = np.zeros(6)
         tau_d[[0, 1, 5]] = Fx, Fy, Mz
-        print(tau_d)
+        #print(tau_d)
         self.tau_cmd = tau_d.copy()
         if np.any(np.isnan(tau_d)):
             tau_d = np.zeros(6)
