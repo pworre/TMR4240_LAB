@@ -46,7 +46,7 @@ command, and on what basis, is part of your allocation design.
 from typing import List, Optional, Tuple
 import numpy as np
 from scipy.optimize import minimize
-from simulation.utils import wrap_angle_pi
+from simulation.utils import wrap_angle_pi, wrap_angle_2pi
 from models.thruster_dynamics import ThrusterConfig
 
 class ThrustAllocator:
@@ -63,206 +63,141 @@ class ThrustAllocator:
         u_now: Optional[np.ndarray] = None,
         alpha_now: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
-        '''part 2 -> rate aware allocation (mode 2) if it fails call part 1 allocation (mode 1), if that fails call saturation mode (mode 0)'''
+        '''part 2 rate aware allocation'''
 
         if(np.isnan(tau_d[5]) or np.isnan(tau_d[0]) or np.isnan(tau_d[1])):
-            print("tau_d is nan")
             tau_d = np.zeros(6)
         if u_now is None or alpha_now is None:
             u_now = np.zeros(len(self.thrusters))
-            alpha_now = np.zeros(len(self.thrusters))
-        #TODO angle wrapping for alpha_now and alpha_cmd
-        #u_cmd, alpha_cmd, B_e, tau_achieved=allocate_part_1(tau_d, u_now, alpha_now, self)
-        u_cmd, alpha_cmd, tau_achieved, success = allocate_part_2(tau_d, u_now, alpha_now, self, dt, t)
-        model=2
+            alpha_now = np.array([np.pi/2, 0, 0]) 
+
+        alpha_unwrapped = np.array([wrap_angle_2pi(alpha_now[0]), wrap_angle_2pi(alpha_now[1]), wrap_angle_2pi(alpha_now[2])])
+        u_cmd, alpha_cmd, tau_achieved, success = allocate_part_2(tau_d/1000, u_now/1000, alpha_unwrapped, self, dt, t)
         if not success:
-            #print("Fallback to part 1 allocation")
-            u_cmd, alpha_cmd, B_e, tau_achieved, model = allocate_part_1(tau_d, u_now, alpha_now, self)
-        data_extraction(tau_achieved, tau_d, model, t)
-        ok=dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self ,t, model)
-
-
-        #TODO clip numerical solutions to exact limits
+            return u_now, alpha_now
+        data_extraction(tau_achieved, tau_d, t)
         return u_cmd, alpha_cmd
 
-def data_extraction(tau_achieved, tau_d, model, t):
+def data_extraction(tau_achieved, tau_d, t):
     #print("time:", t)
     with open("allocator_results.csv", "a") as f:
         f.write(
-            f"{model},"
             f"{tau_d[0]},{tau_d[1]},{tau_d[5]},"
             f"{tau_achieved[0]},{tau_achieved[1]},{tau_achieved[2]},\n"
         )
     return
 
 def B_matrix(alpha_now, self):
-    #B_e no lineraization of the azimuth angles
     B_T=np.array([0,1,self.thrusters[0].x]).T
     B_A1=np.array([np.cos(alpha_now[1]),np.sin(alpha_now[1]), self.thrusters[1].x*np.sin(alpha_now[1])-self.thrusters[1].y*np.cos(alpha_now[1])]).T
     B_A2=np.array([np.cos(alpha_now[2]),np.sin(alpha_now[2]), self.thrusters[2].x*np.sin(alpha_now[2])-self.thrusters[2].y*np.cos(alpha_now[2])]).T
     B_e = np.column_stack([B_T, B_A1, B_A2])
-    #check rank(B)=3:
+
     if(np.linalg.matrix_rank(B_e)<3):
         print("B is not full rank, check the actuator configuration matrix")
-        return np.zeros(self.n), np.zeros(self.n)
+        return None
+
+    singular_values = np.linalg.svd(B_e, compute_uv=False)
+    condition_number = singular_values[0] / singular_values[-1]
+    #print(f"Condition number: {condition_number:.2e}")
+    
+
     return B_e
 
 def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rate aware
-    '''Thrust input in Ns ->working with kNs -> output in Ns'''
+    '''
+    u_now and tau_d in kNs, working with kNs, output in Ns
 
-    u_now_KN = u_now/1000
+    alpha_now: unwrapped angles in [0, 2pi], gets wrapped after the optimization
+    '''
     B_e = B_matrix(alpha_now, self)
-    if(np.linalg.matrix_rank(B_e)<3):
-        print("B is not full rank, check the actuator configuration matrix")
-        return np.zeros(self.n), np.zeros(self.n), np.zeros(3)
-
-    #weights for the cost function:
-    Q=np.diag([100*1e6,100*1e6,100*1e6]) #error penalty
-    #Q=np.diag([100,100,100])
-    P=np.diag([1,1,1]) #thruster magnitude penalty
-    R = np.diag([1,1]) #azimuth angle penalty
+    if B_e is None:
+        return u_now, alpha_now, B_e @ u_now, False #no solution found, keep previous state
     
-    #cost function, thrust, slack variable, angle:
+    Q=np.diag([300*1e6,300*1e6,300*1e6]) #error penalty
+    P=np.diag([1,1,1]) #thruster magnitude penalty
+    R = np.diag([2,2]) #azimuth angle penalty
+    
     def cost(x): #x = [delta_z, delta_alpha, s]
         delta_z = x[0:3]
         delta_alpha = x[3:5]
         s = x[5:8]
-        z = u_now_KN + delta_z
-        return s.T @ Q @ s + z.T @ P @ z + delta_alpha.T @ R @ delta_alpha
+        z = z = u_now + delta_z
+        cost=s.T @ Q @ s + z.T @ P @ z + delta_alpha.T @ R @ delta_alpha
+        return cost/1e6
 
-    def thrust_constraint(x): #thruster absolute magnitude limit
+    def thrust_constraint(x): #-u_max <= z <= u_max
         delta_z = x[0:3]
-        z = u_now_KN + delta_z
+        z = u_now + delta_z
         u_max = np.array([
             thruster.u_max / 1000
             for thruster in self.thrusters[:3]
         ])
-        return u_max - np.abs(z)
+        #(u_max - z) >= 0 and (z - (-u_max)) >= 0
+        lower_bound = z - (-u_max)
+        upper_bound = u_max - z
+        return np.concatenate([lower_bound, upper_bound])
 
-    def azimuth_rate_constraint(x): #azimuth rotation rate limit
-        delta_alpha = x[3:5]
-        alpha_max = np.array([(self.thrusters[1].rot_speed * dt - abs(delta_alpha[0])), (self.thrusters[2].rot_speed * dt - abs(delta_alpha[1]) )])
-        return alpha_max
-
-    def thrust_rate_constraint(x): #thruster rate limit
-        delta_z = x[0:3]
-        u_rate_max = np.array([
-            thruster.u_rate * dt/1000
-            for thruster in self.thrusters[:3]
-        ])
-        return u_rate_max - np.abs(delta_z)
     def wrench_constraint(x):
         delta_z = x[0:3]
         delta_alpha = x[3:5]
         s = x[5:8]
-        z = u_now_KN + delta_z
+        z = u_now + delta_z
         alpha = np.array([alpha_now[0],alpha_now[1] + delta_alpha[0],alpha_now[2] + delta_alpha[1]])
 
-        return B_matrix(alpha, self) @ z - tau_d[[0, 1, 5]] / 1000 - s
+        return B_matrix(alpha, self) @ z - tau_d[[0, 1, 5]] - s
 
-    constraints = [
-    {"type": "ineq","fun": thrust_constraint},
-    {"type": "eq","fun": wrench_constraint},
-    {"type": "ineq","fun": azimuth_rate_constraint},
-    {"type": "ineq","fun": thrust_rate_constraint}
-    ]
-    #intial guess
-    x0=np.zeros(8)
-    result=minimize(cost, x0, method='SLSQP', constraints=constraints, options={
+    def singularity_constraint(x):
+        delta_alpha = x[3:5]
+
+        a1 = alpha_now[1] + delta_alpha[0]
+        a2 = alpha_now[2] + delta_alpha[1]
+
+        eps1 = self.thrusters[1].rot_speed / 3
+        eps2 = self.thrusters[1].rot_speed / 3
+
+        return (
+            np.cos(a1)**2 / np.sin(eps1)**2
+            + np.cos(a2)**2 / np.sin(eps2)**2
+            - 1
+        )
+        
+
+        
+
+    constraints = [{"type": "ineq","fun": thrust_constraint},{"type": "eq","fun": wrench_constraint},{"type": "ineq","fun": singularity_constraint}]
+
+    bounds = []
+    for thruster in self.thrusters[:3]: #thrust rate
+        limit = thruster.u_rate * dt / 1000
+        bounds.append((-limit, limit))
+
+    for thruster in self.thrusters[1:3]: #angle rate
+        limit = thruster.rot_speed * dt
+        bounds.append((-limit, limit))
+
+    for _ in range(3): #slack variable
+        bounds.append((None, None))
+
+
+    s_initial = B_matrix(alpha_now, self) @ u_now - tau_d[[0, 1, 5]] #start from previous s
+    x0 = np.concatenate([np.zeros(3), np.zeros(2), s_initial])
+
+    result=minimize(cost, x0, method='SLSQP', constraints=constraints, bounds=bounds, options={
             'ftol': 1e-8,
             'maxiter': 2000,
             'disp': False
         })
 
-    if result.success: #solution found, check if feasible
-        res=result.x
-        # x:[delta_z, delta_alpha, s]
-        tau_achieved = B_matrix(np.array([alpha_now[0],alpha_now[1] + res[3],alpha_now[2] + res[4]]), self) @ (u_now_KN + res[0:3]) * 1000
-        u_cmd =(u_now_KN + res[0:3])*1000
+    res=result.x # x:[delta_z, delta_alpha, s]
 
-        #wrap angles to [-pi, pi]
-        alpha_cmd = np.array([alpha_now[0], alpha_now[1] + res[3], alpha_now[2] + res[4]])
-        #alpha_cmd = np.arctan2(np.sin(alpha_cmd), np.cos(alpha_cmd))
-        alpha_cmd[1] = wrap_angle_pi(alpha_cmd[1])
-        alpha_cmd[2] = wrap_angle_pi(alpha_cmd[2])
-        if feasible(u_cmd, 1e-6, self):
-            return u_cmd, alpha_cmd, tau_achieved, True #solution found and feasible
-        else:
-            return u_cmd, alpha_cmd, tau_achieved, False
+    u_cmd, alpha_cmd= clip(alpha_now, u_now*1000, res[3:5], res[0:3]*1000, self, dt)
 
-    #failed optimization, return zeros
-    return np.zeros(3), np.zeros(3), np.zeros(3), False
-
-def allocate_part_1(tau_d, u_now, alpha_now, self):
-    #tunnel thruster (constant):
-    B_T=np.array([0,1,self.thrusters[0].x]).T
-    #azimuth thruster 1 (linearization):
-    B_FxA1=np.array([1,0, -self.thrusters[1].y]).T
-    B_FyA1=np.array([0,1, self.thrusters[1].x]).T
-    #azimuth thruster 2 (linearization):
-    B_FxA2=np.array([1,0, -self.thrusters[2].y]).T
-    B_FyA2=np.array([0,1, self.thrusters[2].x]).T
-    #creating the actuator configuration matrix
-    B_e = np.column_stack([B_T, B_FxA1, B_FyA1, B_FxA2, B_FyA2])
-
-    #check rank(B)=3:
-    if(np.linalg.matrix_rank(B_e)<3):
-        print("B is not full rank, check the actuator configuration matrix")
-        return np.zeros(self.n), np.zeros(self.n)
-
-    #weights for the cost function:
-    Q=np.diag([100*1e6,100*1e6,100*1e6]) #error penalty
-    #Q=np.diag([100,100,100]) #error penalty
-    R = np.diag([
-        1.0 / self.thrusters[0].u_max**2,
-        1.0 / self.thrusters[1].u_max**2,
-        1.0 / self.thrusters[1].u_max**2,
-        1.0 / self.thrusters[2].u_max**2,
-        1.0 / self.thrusters[2].u_max**2,
-    ])
-
-    Fx1_now = u_now[1] * np.cos(alpha_now[1])
-    Fy1_now = u_now[1] * np.sin(alpha_now[1])
-    Fx2_now = u_now[2] * np.cos(alpha_now[2])
-    Fy2_now = u_now[2] * np.sin(alpha_now[2])
-
-    z0 = np.array([u_now[0], Fx1_now, Fy1_now, Fx2_now, Fy2_now])/1000
-
-    #building the cost function:
-    def cost(z): #3x5 5x1 - 3x1
-        s = B_e @ z - tau_d[[0,1,5]]/1000 #error
-        return s.T @ Q @ s + (z-z0).T @ R @ (z-z0)
-
-    constraints = [
-        {'type': 'ineq',
-        'fun': lambda z: self.thrusters[0].u_max/1000 - np.abs(z[0])},
-        {'type': 'ineq',
-        'fun': lambda z: self.thrusters[1].u_max/1000 - np.hypot(z[1], z[2])},
-        {'type': 'ineq',
-        'fun': lambda z: self.thrusters[2].u_max/1000 - np.hypot(z[3], z[4])},
-    ]
-
-    result=minimize(cost, z0, method='SLSQP', constraints=constraints, options={
-        'ftol': 1e-8,
-        'maxiter': 2000,
-        'disp': False
-    })
-    z=result.x
-    if result.success:
-        if feasible(z, 1e-6, self): #solution is found and feasible
-            model=1
-            tau_achieved = B_e @ z * 1000
-            u_cmd, alpha_cmd = recover_thrust(z)
-            return u_cmd, alpha_cmd, B_e, tau_achieved, model
-
-    #no solution found or infeasible solution
-    model=0
-    z=saturation_mode(B_e, tau_d, self) #checks feasibility, returns zero if no solution is found
-    tau_achieved = B_e @ z * 1000
-    u_cmd, alpha_cmd = recover_thrust(z)
-    return u_cmd, alpha_cmd, B_e, tau_achieved, model
-
-
+    for i in range(3):
+        alpha_cmd[i] = wrap_angle_pi(alpha_cmd[i])
+    tau_achieved = B_matrix(alpha_cmd, self) @ u_cmd
+    #print(f"u_cmd: {u_cmd}, alpha_cmd: {alpha_cmd}, tau_achieved: {tau_achieved}, tau_d: {tau_d[[0, 1, 5]]}, t: {t}")
+    return u_cmd, alpha_cmd, tau_achieved, True 
 
 def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self,t, model): #returns true if rate limits are passed
     #check if rotation rate is ok:
@@ -275,66 +210,13 @@ def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self,t, model): #returns tru
         return False
     return True
 
-def saturation_mode(B_e, tau_d, self): #infeasible demand gets called if part 1 fails to find a solution
-    tau = tau_d[[0, 1, 5]]/1000
 
-    def cost1(x):
-        return -x[5]       
-
-    def equality(x):
-        z = x[:5]
-        k = x[5]
-        return B_e @ z - k * tau
-
-    def cost(x):
-        z = x[:5]
-        k = x[5]
-
-        usage = (
-            (z[0] / (self.thrusters[0].u_max/1000))**2
-            + (z[1]**2 + z[2]**2) / (self.thrusters[1].u_max/1000)**2
-            + (z[3]**2 + z[4]**2) / (self.thrusters[2].u_max/1000)**2
-        )
-
-        return -k + 1e-4 * usage
-
-    constraints = [
-        # B_e z = lambda * tau_d
-        {'type': 'eq', 'fun': equality},
-        {'type': 'ineq','fun': lambda x: (self.thrusters[0].u_max/1000)**2 - x[0]**2},
-        {'type': 'ineq','fun': lambda x: (self.thrusters[1].u_max/1000)**2 - x[1]**2 - x[2]**2},
-        {'type': 'ineq','fun': lambda x: (self.thrusters[2].u_max/1000)**2 - x[3]**2 - x[4]**2},
-
-        # 0 <= k scalar <= 1
-        {'type': 'ineq', 'fun': lambda x: x[5]},
-        {'type': 'ineq', 'fun': lambda x: 1.0 - x[5]},
-    ]
-    #pseudo inverse without constrains
-    z_unit = np.linalg.pinv(B_e) @ tau
-    scales = [
-        self.thrusters[0].u_max/1000 / abs(z_unit[0]),
-        self.thrusters[1].u_max/1000 / np.hypot(z_unit[1], z_unit[2]),
-        self.thrusters[2].u_max/1000 / np.hypot(z_unit[3], z_unit[4])
-    ]
-    #creating a valid initial scaler to start from
-    k0 = min(1.0, *scales) * 0.5
-
-    z0 = k0 * z_unit
-    x0 = np.r_[z0, k0]
-    result = minimize(cost, x0 , method='SLSQP', constraints=constraints, options={'ftol': 1e-8,'maxiter': 2000,'disp': False})
-
-    if result.success:
-        z = result.x[:5]
-        k = result.x[5]
-        if feasible(z,1e-3, self):
-            #print("Warning: Saturated thrust!")
-            return z
-    
-    print("Warning: Zero Thrust!") #no solution found
-    return np.zeros(5)
-
-def feasible(z, limit, self): #returns True if the solution is feasible
-    #no azimuth transformation part 2
+def feasible(z, limit, self):
+    '''
+    input in Ns for part 2
+    input in kNs for part 1
+    returns True if the solution is feasible, no azimuth transformation part 2
+    '''
     if len(z) ==3: 
         if np.abs(z[0])-limit < self.thrusters[0].u_max and np.abs(z[1])-limit<self.thrusters[1].u_max and np.abs(z[2])-limit<self.thrusters[2].u_max:
             return True
@@ -347,26 +229,31 @@ def feasible(z, limit, self): #returns True if the solution is feasible
         return False
     return True
 
-def recover_thrust(z): #part 1 method
-    z=1000*z #back to kN
-    u_T = z[0]
-    FxA1, FyA1 = z[1], z[2]
-    FxA2, FyA2 = z[3], z[4]
-            
-    #recovering azimuth thrust magnitudes and angles from the solution:
-    u_1=np.hypot(FxA1,FyA1)
-    u_2=np.hypot(FxA2,FyA2)
-    
-    a_1=np.arctan2(FyA1,FxA1)
-    a_2=np.arctan2(FyA2,FxA2)
-    
-    #make sure alpha is within [-pi, pi]:
-    a_1=wrap_angle_pi(a_1)
-    a_2=wrap_angle_pi(a_2)
-    u_cmd = np.array([u_T, u_1, u_2])
-    alpha_cmd = np.array([np.pi / 2, a_1, a_2])
-    return u_cmd, alpha_cmd
+def singularity_guard(B_e, alpha_now,delta_alpha,alpha_cmd, self):
+    '''
+    if both thrusters are around +- pi/2, B_e is singular
+    '''
 
-def clip_to_limits(u_cmd, alpha_cmd, self, delta_alpha, delta_u): #clip the solution to exact limits
+
+    return alpha_cmd
+
+def clip(alpha_now, u_now, delta_alpha, delta_u, self, dt):
+    '''
+    make sure solution is within the rate limits and absolute limits
     
+    input and output angles are unwrapped
+    input in Ns output in Ns
+    '''
+
+    u_rate_limits = np.array([thruster.u_rate * dt for thruster in self.thrusters[:3]])
+    alpha_rate_limits = np.array([thruster.rot_speed * dt for thruster in self.thrusters[1:3]])
+    u_limits = np.array([thruster.u_max for thruster in self.thrusters[:3]])
+    
+
+    delta_u = np.clip(delta_u, -u_rate_limits, u_rate_limits)
+    delta_alpha = np.clip(delta_alpha, -alpha_rate_limits, alpha_rate_limits)
+
+    u_cmd = np.clip(u_now + delta_u, -u_limits, u_limits)
+    alpha_cmd = np.array([alpha_now[0], alpha_now[1] + delta_alpha[0], alpha_now[2] + delta_alpha[1]])
+
     return u_cmd, alpha_cmd
