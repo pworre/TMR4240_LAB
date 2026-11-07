@@ -63,6 +63,8 @@ class ThrustAllocator:
         u_now: Optional[np.ndarray] = None,
         alpha_now: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
+        '''part 2 -> rate aware allocation (mode 2) if it fails call part 1 allocation (mode 1), if that fails call saturation mode (mode 0)'''
+
         if(np.isnan(tau_d[5]) or np.isnan(tau_d[0]) or np.isnan(tau_d[1])):
             print("tau_d is nan")
             tau_d = np.zeros(6)
@@ -180,7 +182,9 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
 
         #wrap angles to [-pi, pi]
         alpha_cmd = np.array([alpha_now[0], alpha_now[1] + res[3], alpha_now[2] + res[4]])
-        alpha_cmd = np.arctan2(np.sin(alpha_cmd), np.cos(alpha_cmd))
+        #alpha_cmd = np.arctan2(np.sin(alpha_cmd), np.cos(alpha_cmd))
+        alpha_cmd[1] = wrap_angle_pi(alpha_cmd[1])
+        alpha_cmd[2] = wrap_angle_pi(alpha_cmd[2])
         if feasible(u_cmd, 1e-6, self):
             return u_cmd, alpha_cmd, tau_achieved, True #solution found and feasible
         else:
@@ -274,13 +278,25 @@ def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self,t, model): #returns tru
 def saturation_mode(B_e, tau_d, self): #infeasible demand gets called if part 1 fails to find a solution
     tau = tau_d[[0, 1, 5]]/1000
 
-    def cost(x):
+    def cost1(x):
         return -x[5]       
 
     def equality(x):
         z = x[:5]
         k = x[5]
         return B_e @ z - k * tau
+
+    def cost(x):
+        z = x[:5]
+        k = x[5]
+
+        usage = (
+            (z[0] / (self.thrusters[0].u_max/1000))**2
+            + (z[1]**2 + z[2]**2) / (self.thrusters[1].u_max/1000)**2
+            + (z[3]**2 + z[4]**2) / (self.thrusters[2].u_max/1000)**2
+        )
+
+        return -k + 1e-4 * usage
 
     constraints = [
         # B_e z = lambda * tau_d
@@ -349,4 +365,8 @@ def recover_thrust(z): #part 1 method
     a_2=wrap_angle_pi(a_2)
     u_cmd = np.array([u_T, u_1, u_2])
     alpha_cmd = np.array([np.pi / 2, a_1, a_2])
+    return u_cmd, alpha_cmd
+
+def clip_to_limits(u_cmd, alpha_cmd, self, delta_alpha, delta_u): #clip the solution to exact limits
+    
     return u_cmd, alpha_cmd
