@@ -110,14 +110,13 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
 
     alpha_now: unwrapped angles in [0, 2pi], gets wrapped after the optimization
     '''
-
     B_e = B_matrix(alpha_now, self)
     if B_e is None:
         return u_now, alpha_now, B_e @ u_now, False #no solution found, keep previous state
     
-    Q=np.diag([100*1e6,100*1e6,100*1e6]) #error penalty
+    Q=np.diag([300*1e6,300*1e6,300*1e6]) #error penalty
     P=np.diag([1,1,1]) #thruster magnitude penalty
-    R = np.diag([1,1]) #azimuth angle penalty
+    R = np.diag([2,2]) #azimuth angle penalty
     
     def cost(x): #x = [delta_z, delta_alpha, s]
         delta_z = x[0:3]
@@ -148,7 +147,25 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
 
         return B_matrix(alpha, self) @ z - tau_d[[0, 1, 5]] - s
 
-    constraints = [{"type": "ineq","fun": thrust_constraint},{"type": "eq","fun": wrench_constraint},]
+    def singularity_constraint(x):
+        delta_alpha = x[3:5]
+
+        a1 = alpha_now[1] + delta_alpha[0]
+        a2 = alpha_now[2] + delta_alpha[1]
+
+        eps1 = self.thrusters[1].rot_speed / 3
+        eps2 = self.thrusters[1].rot_speed / 3
+
+        return (
+            np.cos(a1)**2 / np.sin(eps1)**2
+            + np.cos(a2)**2 / np.sin(eps2)**2
+            - 1
+        )
+        
+
+        
+
+    constraints = [{"type": "ineq","fun": thrust_constraint},{"type": "eq","fun": wrench_constraint},{"type": "ineq","fun": singularity_constraint}]
 
     bounds = []
     for thruster in self.thrusters[:3]: #thrust rate
@@ -211,6 +228,14 @@ def feasible(z, limit, self):
     if np.abs(z[0])-limit*0.5>self.thrusters[0].u_max/1000 or magA1>self.thrusters[1].u_max/1000 or magA2>self.thrusters[2].u_max/1000:
         return False
     return True
+
+def singularity_guard(B_e, alpha_now,delta_alpha,alpha_cmd, self):
+    '''
+    if both thrusters are around +- pi/2, B_e is singular
+    '''
+
+
+    return alpha_cmd
 
 def clip(alpha_now, u_now, delta_alpha, delta_u, self, dt):
     '''
