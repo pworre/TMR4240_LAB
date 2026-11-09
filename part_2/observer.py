@@ -261,12 +261,10 @@ class KalmanFilterObserver(Observer):
         self.bias_tau = np.array([300, 300, 300])
         # Sigma 0.07 below w_0, 0.09 above w_0
         # Model and measurement noise
-        self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2]) # should be covariance of W_w 
-        # The covariance Q1 is estimated together with the parameters of the WF motion model from data measured 
-        # before and during the operation of the craft.
+        self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2])
 
-        self.q_force = 0.5 * np.array(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Should be covariance of W_b. Usually diagonal. 
-        # The entries of the matrix Q2 are taken as a fraction of the variance of the position measurement noises
+        sigma_Fx, sigma_Yx, sigma_Mz = 1000 * np.array([100, 150, 1000])
+        self.q_force = 0.5 * np.array([sigma_Fx**2, sigma_Yx**2, sigma_Mz**2])
 
         self.q_bias = np.array([100.0**2, 100.0**2, 200.0**2])
 
