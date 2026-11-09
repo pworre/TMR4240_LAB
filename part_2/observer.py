@@ -263,7 +263,7 @@ class KalmanFilterObserver(Observer):
         # Model and measurement noise
         self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2])
 
-        sigma_Fx, sigma_Yx, sigma_Mz = 1000 * np.array([100, 150, 1000])
+        sigma_Fx, sigma_Yx, sigma_Mz = 100 * np.array([2.5, 5, 10])
         self.q_force = 0.5 * np.array([sigma_Fx**2, sigma_Yx**2, sigma_Mz**2])
 
         self.q_bias = np.array([100.0**2, 100.0**2, 200.0**2])
@@ -296,9 +296,9 @@ class KalmanFilterObserver(Observer):
         self.P0 = np.diag([
             0.25, 0.25, np.deg2rad(0.25)**2, #WF
             0.04, 0.04, np.deg2rad(0.05)**2, #WF
-            0.15, 0.15, np.deg2rad(0.05)**2, #eta
-            0.25, 0.25, np.deg2rad(0.05)**2,   #nu
-            1000, 1000, 1000,      #bias
+            0.08, 0.08, np.deg2rad(0.05)**2, #eta
+            0.20, 0.20, np.deg2rad(0.05)**2, #nu
+            1000, 1000, 1000,                #bias
         ])
         self.P = self.P0.copy()
 
