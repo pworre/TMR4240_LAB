@@ -75,7 +75,7 @@ class ThrustAllocator:
         u_cmd, alpha_cmd, tau_achieved, success = allocate_part_2(tau_d/1000, u_now/1000, alpha_unwrapped, self, dt, t)
         if not success:
             return u_now, alpha_now
-        data_extraction(tau_achieved, tau_d, t, dt)
+        #data_extraction(tau_achieved, tau_d, t, dt)
         return u_cmd, alpha_cmd
 
 def data_extraction(tau_achieved, tau_d, t, dt):
@@ -101,8 +101,6 @@ def B_matrix(alpha_now, self):
     singular_values = np.linalg.svd(B_e, compute_uv=False)
     condition_number = singular_values[0] / singular_values[-1]
     #print(f"Condition number: {condition_number:.2e}")
-    
-
     return B_e
 
 def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rate aware
@@ -183,7 +181,7 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
     x0 = np.concatenate([np.zeros(3), np.zeros(2), s_initial])
 
     result=minimize(cost, x0, method='SLSQP', constraints=constraints, bounds=bounds, options={
-            'ftol': 1e-9,
+            'ftol': 1e-8,
             'maxiter': 500,
             'disp': False
         })
@@ -197,17 +195,6 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
     
     #print(f"u_cmd: {u_cmd}, alpha_cmd: {alpha_cmd}, tau_achieved: {tau_achieved}, tau_d: {tau_d[[0, 1, 5]]}, t: {t}")
     return u_cmd, alpha_cmd, tau_achieved, True 
-
-def dynamics(u_now, alpha_now, u_cmd, alpha_cmd,dt ,self,t, model): #returns true if rate limits are passed
-    #check if rotation rate is ok:
-    if self.thrusters[1].rot_speed<np.abs((alpha_cmd[1]-alpha_now[1])/dt) or self.thrusters[2].rot_speed<np.abs((alpha_cmd[2]-alpha_now[2])/dt):
-        print(f"Azimuth rotation speed exceeded at time {t} model {model}, delta alpha1: {np.abs((alpha_cmd[1]-alpha_now[1])/dt)}, delta alpha2: {np.abs((alpha_cmd[2]-alpha_now[2])/dt)}")
-        return False
-    #thruster rate limit check:
-    if self.thrusters[0].u_rate<np.abs((u_cmd[0]-u_now[0])/dt) or self.thrusters[1].u_rate<np.abs((u_cmd[1]-u_now[1])/dt) or self.thrusters[2].u_rate<np.abs((u_cmd[2]-u_now[2])/dt):
-        print(f"Thruster rate limit exceeded at time {t}, model {model}")
-        return False
-    return True
 
 
 def feasible(z, limit, self):
