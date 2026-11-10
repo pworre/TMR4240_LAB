@@ -55,8 +55,11 @@ def average_utilization(logs, thrusters, t_from: float | None = None) -> float:
     :func:`thrust_utilization` over the evaluation window.
     """
     t=logs.t
+    if t_from is None:
+        t_from = t[0] + 0.5 * (t[-1] - t[0])
     ut = thrust_utilization(logs, thrusters)
-    return float(np.mean(ut[t >= t_from]))
+    t_u = t >= t_from
+    return float(np.mean(ut[t_u]))
 
     raise NotImplementedError(
         "implement average_utilization() in part_2/utilization.py — the "
