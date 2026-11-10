@@ -171,6 +171,7 @@ class Wind:
         n_components = int(params.get("n_components", 100))
         f_min = float(params.get("f_min", 0.001))
         f_max = float(params.get("f_max", 1.0))
+        self.turbulence_intensity = float(params.get("turbulence_intensity", 0.1))
 
         # 10 m standard for NORSOK
         self.elevation = int(params.get("elevation", 10))
@@ -188,12 +189,21 @@ class Wind:
         # Remember we talk in bins, NOT components. Hence, bins = n_components + 1
         bins = np.linspace(f_min, f_max, n_components + 1)
         # Centre frequencies = (lower + upper) / 2
-        self.gust_frequencies = (bins[:-1] + bins[1:])
+        self.gust_frequencies = (bins[:-1] + bins[1:]) / 2
         df = np.diff(bins)
 
         S = self.wind_spectrum(self.gust_frequencies)
 
-        self.U_g = np.sqrt(2 * S * df)
+        # Turbulence intensity
+        sigma_original = np.sqrt(np.sum(S * df))
+        sigma_gust = self.turbulence_intensity * self.mean_speed
+
+        if sigma_original > 0:
+            K = sigma_gust / sigma_original
+        else:
+            K = 0
+
+        self.U_g = K * np.sqrt(2 * S * df)
 
         self.gust_phases = self.random_generator.uniform(0.0, 2.0 * np.pi, size=n_components)
 

@@ -30,7 +30,6 @@ from scipy.differentiate import jacobian
 from models.sensors import SENSOR_ETA_STD
 from simulation.utils import Rz, wrap_angle_pi
 
-
 @dataclass
 class ObserverEstimate:
     eta: np.ndarray
@@ -70,13 +69,166 @@ class NonlinearPassiveObserver(Observer):
 
     name = "nonlinear_passive"
 
+
+
     def __init__(self, *args, **kwargs):
-        pass
+        #First, loading vessel data
+        pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
+        with open(str(pkl), "rb") as f:
+            data = pickle.load(f)
 
+
+        #Defining identity matrix and zero matrix
+        self.I3 = np.eye(3)
+        self.Z3 = np.zeros((3,3))
+        
+        #Defining states for the NPO
+        self.xi_hat = np.zeros(6)
+        self.eta_hat = np.zeros(3)
+        self.nu_hat = np.zeros(3)
+        self.bias_hat = np.zeros(3)
+
+
+        #Tuneable parameters
+        self.T_b = np.diag([1000.0, 1000.0, 1000.0])
+        self.T_b_inv = np.linalg.inv(self.T_b)
+
+        self.w_w = 2 * np.pi / 8.0  
+        self.zeta_w = 0.1
+        self.zeta_n = 1.0
+        self.w_c = 1.5
+
+
+        delta_zeta = self.zeta_n - self.zeta_w
+
+        k1 = -2 * delta_zeta * self.w_c / self.w_w
+        k4 = 2 * self.w_w * delta_zeta
+        k7 = self.w_c
+
+
+        #Correction gains
+        self.K1 = np.vstack([
+            k1 * self.I3,
+            k4 * self.I3
+        ])
+
+        self.K2 = k7 * self.I3
+        self.K3 = np.diag([
+            10000.0,
+            10000.0,
+            1000000.0
+        ])
+
+        self.K4 = np.diag([
+            100000.0,
+            100000.0,
+            10000000.0
+        ])
+        
+        self.A_w = np.block([
+        [self.Z3, self.I3],
+        [(-(self.w_w**2)*self.I3), (-2*self.zeta_w*self.w_w)*self.I3]
+        ])
+
+        self.E_w = np.vstack([self.Z3, self.I3])
+        self.C_w = np.hstack([self.Z3, self.I3])
+
+        M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
+        M = np.diag(np.diag(M_RB + M_A))
+
+        self.M_inv = np.linalg.inv(M)
+        self.D = np.diag(np.diag(Dl))
+
+        self.reset()
+
+
+    def passivity_matrices(self):
+        A_o = np.block([
+            [self.A_w - self.K1 @ self.C_w, -self.K1, np.zeros((6,3))],
+            [-self.K2 @ self.C_w, -self.K2, self.Z3],
+            [-self.K3 @ self.C_w, -self.K3, -self.T_b_inv]
+        ])
+
+        B_o = np.vstack([
+            np.zeros((6, 3)),
+            self.I3,
+            self.Z3
+        ])
+
+        C_o = np.hstack([
+            self.K4 @ self.C_w,
+            self.K4,
+            -self.I3
+        ])
+
+        return A_o, B_o, C_o
+
+
+    @staticmethod
+    def J(psi):
+        return np.array([
+                [np.cos(psi), -np.sin(psi), 0],
+                [np.sin(psi), np.cos(psi), 0],
+                [0,0,1]
+                    ])
+
+
+    def reset(self, eta0=None):
+        self.xi_hat = np.zeros(6)
+
+        if eta0 is not None:
+            eta0 = np.asarray(eta0, dtype=float).reshape(6)
+            self.eta_hat = eta0[[0, 1, 5]].copy()
+        else:
+            self.eta_hat = np.zeros(3)
+
+        self.nu_hat = np.zeros(3)
+        self.bias_hat = np.zeros(3)
+        
     def step(self, t, dt, eta_measured, tau_est):
-        # TODO: implement the nonlinear passive observer.
-        return self._placeholder(eta_measured)
 
+        y_m = eta_measured[[0, 1, 5]]
+        y_hat = self.eta_hat + self.C_w@self.xi_hat 
+         
+        y_tilde = y_m - y_hat
+        y_tilde[2] = wrap_angle_pi(y_tilde[2])
+
+        psi_hat = self.eta_hat[2]
+
+        J_hat = self.J(psi_hat)
+
+        tau_3dof = tau_est[[0, 1, 5]]
+
+
+        xi_dot_hat = self.A_w @ self.xi_hat + self.K1 @ y_tilde
+
+        eta_dot_hat = J_hat @ self.nu_hat + self.K2 @ y_tilde
+
+        nu_dot_hat = self.M_inv @ (-self.D @ self.nu_hat + J_hat.T @ self.bias_hat + tau_3dof + J_hat.T @ self.K4 @ y_tilde)
+        
+        bias_dot_hat = -self.T_b_inv@self.bias_hat + self.K3 @ y_tilde
+
+
+        self.xi_hat += dt * xi_dot_hat
+        self.eta_hat += dt * eta_dot_hat
+        self.nu_hat += dt * nu_dot_hat
+        self.bias_hat += dt * bias_dot_hat
+
+        self.eta_hat[2] = wrap_angle_pi(self.eta_hat[2])
+
+        eta_out = np.zeros(6)
+        nu_out = np.zeros(6)
+        bias_out = np.zeros(6)
+
+        eta_out[[0, 1, 5]] = self.eta_hat
+        nu_out[[0, 1, 5]] = self.nu_hat
+        bias_out[[0, 1, 5]] = self.bias_hat
+
+        return ObserverEstimate(
+            eta=eta_out,
+            nu=nu_out,
+            bias=bias_out
+        )
 
 class KalmanFilterObserver(Observer):
     """Template for a discrete KF/EKF observer.
@@ -109,12 +261,10 @@ class KalmanFilterObserver(Observer):
         self.bias_tau = np.array([300, 300, 300])
         # Sigma 0.07 below w_0, 0.09 above w_0
         # Model and measurement noise
-        self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2]) # should be covariance of W_w 
-        # The covariance Q1 is estimated together with the parameters of the WF motion model from data measured 
-        # before and during the operation of the craft.
+        self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2])
 
-        self.q_force = 0.5 * np.array(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Should be covariance of W_b. Usually diagonal. 
-        # The entries of the matrix Q2 are taken as a fraction of the variance of the position measurement noises
+        sigma_Fx, sigma_Yx, sigma_Mz = 100 * np.array([2.5, 5, 10])
+        self.q_force = 0.5 * np.array([sigma_Fx**2, sigma_Yx**2, sigma_Mz**2])
 
         self.q_bias = np.array([100.0**2, 100.0**2, 200.0**2])
 
@@ -146,9 +296,9 @@ class KalmanFilterObserver(Observer):
         self.P0 = np.diag([
             0.25, 0.25, np.deg2rad(0.25)**2, #WF
             0.04, 0.04, np.deg2rad(0.05)**2, #WF
-            0.15, 0.15, np.deg2rad(0.05)**2, #eta
-            0.25, 0.25, np.deg2rad(0.05)**2,   #nu
-            1000, 1000, 1000,      #bias
+            0.08, 0.08, np.deg2rad(0.05)**2, #eta
+            0.20, 0.20, np.deg2rad(0.05)**2, #nu
+            1000, 1000, 1000,                #bias
         ])
         self.P = self.P0.copy()
 
@@ -249,3 +399,4 @@ def select_observer(kind: str, **kwargs) -> Observer:
         return choices[kind](**kwargs)
     except KeyError as exc:
         raise ValueError(f"observer_type must be one of {tuple(choices)}") from exc
+
