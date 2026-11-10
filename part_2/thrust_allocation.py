@@ -75,10 +75,11 @@ class ThrustAllocator:
         u_cmd, alpha_cmd, tau_achieved, success = allocate_part_2(tau_d/1000, u_now/1000, alpha_unwrapped, self, dt, t)
         if not success:
             return u_now, alpha_now
-        data_extraction(tau_achieved, tau_d, t)
+        data_extraction(tau_achieved, tau_d, t, dt)
         return u_cmd, alpha_cmd
 
-def data_extraction(tau_achieved, tau_d, t):
+def data_extraction(tau_achieved, tau_d, t, dt):
+    #print(dt)
     #print("time:", t)
     with open("allocator_results.csv", "a") as f:
         f.write(
@@ -114,9 +115,9 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
     if B_e is None:
         return u_now, alpha_now, B_e @ u_now, False #no solution found, keep previous state
     
-    Q=np.diag([300*1e6,300*1e6,300*1e6]) #error penalty
-    P=np.diag([1,1,1]) #thruster magnitude penalty
-    R = np.diag([2,2]) #azimuth angle penalty
+    Q=np.diag([1100*1e6,1100*1e6,300*1e6]) #error penalty
+    P=np.diag([0.1,0.1,0.1]) #thruster magnitude penalty
+    R = np.diag([0.1,0.1]) #azimuth angle penalty
     
     def cost(x): #x = [delta_z, delta_alpha, s]
         delta_z = x[0:3]
@@ -153,14 +154,12 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
         a1 = alpha_now[1] + delta_alpha[0]
         a2 = alpha_now[2] + delta_alpha[1]
 
-        eps1 = self.thrusters[1].rot_speed / 3
-        eps2 = self.thrusters[1].rot_speed / 3
+        eps1 = 0.25*dt*self.thrusters[1].rot_speed
+        eps2 = 0.25*dt*self.thrusters[1].rot_speed
 
-        return (
-            np.cos(a1)**2 / np.sin(eps1)**2
-            + np.cos(a2)**2 / np.sin(eps2)**2
-            - 1
-        )
+        c=(np.cos(a1)**2 / np.sin(eps1)**2+ np.cos(a2)**2 / np.sin(eps2)**2- 1)
+
+        return c
         
 
         
@@ -184,18 +183,18 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
     x0 = np.concatenate([np.zeros(3), np.zeros(2), s_initial])
 
     result=minimize(cost, x0, method='SLSQP', constraints=constraints, bounds=bounds, options={
-            'ftol': 1e-8,
-            'maxiter': 2000,
+            'ftol': 1e-9,
+            'maxiter': 500,
             'disp': False
         })
 
     res=result.x # x:[delta_z, delta_alpha, s]
 
     u_cmd, alpha_cmd= clip(alpha_now, u_now*1000, res[3:5], res[0:3]*1000, self, dt)
-
+    tau_achieved = B_matrix(alpha_cmd, self) @ u_cmd
     for i in range(3):
         alpha_cmd[i] = wrap_angle_pi(alpha_cmd[i])
-    tau_achieved = B_matrix(alpha_cmd, self) @ u_cmd
+    
     #print(f"u_cmd: {u_cmd}, alpha_cmd: {alpha_cmd}, tau_achieved: {tau_achieved}, tau_d: {tau_d[[0, 1, 5]]}, t: {t}")
     return u_cmd, alpha_cmd, tau_achieved, True 
 
@@ -229,13 +228,6 @@ def feasible(z, limit, self):
         return False
     return True
 
-def singularity_guard(B_e, alpha_now,delta_alpha,alpha_cmd, self):
-    '''
-    if both thrusters are around +- pi/2, B_e is singular
-    '''
-
-
-    return alpha_cmd
 
 def clip(alpha_now, u_now, delta_alpha, delta_u, self, dt):
     '''
