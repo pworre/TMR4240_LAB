@@ -73,7 +73,7 @@ class DPController:
         M = M_RB + M_A
         M_diag = np.diag(M)[:3]
         D_diag = np.diag(Dl)[:3]
-        T_b = np.array([45, 45, 45]) # Bandwidth time constants
+        T_b = np.array([40, 20, 30]) # Bandwidth time constants
         w_b = 2 * np.pi / T_b # Bandwidth frecuencies
         self.zeta = 1.0              # Relative damping factors
         # self.wn = 2 * np.array([0.495, 0.561, 0.495]) # Natural frequencies from open loop crossover frequencies.

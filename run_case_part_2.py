@@ -71,7 +71,7 @@ SEED = 123
 # there first, then set this to "nonlinear_passive" or "kalman" and justify
 # the choice in the report.  It is None until you choose: every preset that
 # needs it stops with a message instead of picking one for you.
-SELECTED_OBSERVER = "kalman"  # None, "nonlinear_passive" or "kalman"
+SELECTED_OBSERVER = None
 
 # Initial observer error used by the convergence demonstration in Part 2,
 # Simulation 4.  The engine resets every observer at the TRUE initial pose, so
@@ -197,7 +197,7 @@ def sim1():
     """Part 2, Simulation 1 — environmental loads: free drift, DP off, 300 s; plots
     the wind field (total, mean+slow and gust speed, direction), current and
     wave loads you built."""
-    cfg = Part2SimConfig(dt=DT, T=300.0, use_controller=False, use_reference=False)
+    cfg = Part2SimConfig(dt=DT, T=30.0, use_controller=False, use_reference=False)
     logs = run(cfg, np.zeros(6), environment())
     plot_time_histories(logs)
     plot_xy(logs)
@@ -210,7 +210,7 @@ def sim1():
 def sim2():
     """Part 2, Simulation 2 — four-corner DP test with constrained Part 2
     thruster dynamics enabled, and with environment and observer disabled."""
-    hold = 200.0
+    hold = 30.0
     cfg = Part2SimConfig(dt=DT, T=5 * hold, use_reference=True,
                          use_observer=False, thruster_dynamics=True)
     logs = run(cfg, four_corner_commands(cfg, hold),
