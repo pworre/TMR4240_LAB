@@ -113,17 +113,20 @@ def allocate_part_2(tau_d, u_now, alpha_now, self,dt, t): #part 2 allocation rat
     if B_e is None:
         return u_now, alpha_now, B_e @ u_now, False #no solution found, keep previous state
     
-    Q=np.diag([1100*1e6,1100*1e6,300*1e6]) #error penalty
-    P=np.diag([0.1,0.1,0.1]) #thruster magnitude penalty
+    Q=np.diag([300,300,900]) #error penalty
+    P=np.diag([1e6/self.thrusters[0].u_max**2,1e6/self.thrusters[0].u_max**2,1e6/self.thrusters[0].u_max**2]) #thruster magnitude penalty
     R = np.diag([0.1,0.1]) #azimuth angle penalty
+    FP=10
     
     def cost(x): #x = [delta_z, delta_alpha, s]
         delta_z = x[0:3]
         delta_alpha = x[3:5]
         s = x[5:8]
-        z = z = u_now + delta_z
-        cost=s.T @ Q @ s + z.T @ P @ z + delta_alpha.T @ R @ delta_alpha
-        return cost/1e6
+        z= u_now + delta_z
+        u_max_kN = np.array([thruster.u_max/1000 for thruster in self.thrusters[:3]])
+        fp=np.sum((z/u_max_kN)**4)
+        cost=s.T @ Q @ s + z.T @ P @ z + delta_alpha.T @ R @ delta_alpha+FP*fp
+        return cost
 
     def thrust_constraint(x): #-u_max <= z <= u_max
         delta_z = x[0:3]
