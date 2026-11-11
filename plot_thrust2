@@ -15,19 +15,10 @@ plt.plot(data["Fy_a"], label="Fy achieved", linestyle="--")
 plt.legend()
 
 plt.figure()
-plt.plot(data["Mz_d"], label="Mz demand")
+#plt.plot(data["Mz_d"], label="Mz demand")
 plt.plot(data["Mz_a"], label="Mz achieved", linestyle="--")
 plt.legend()
 
-
-counts, bins = np.histogram(data["model"], bins=3)
-plt.figure()
-plt.stairs(counts, bins)
-plt.legend()
-
-plt.figure()
-plt.plot(data["model"], label="model")
-plt.legend()
 
 
 plt.show()
