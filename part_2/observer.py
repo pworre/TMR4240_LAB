@@ -243,8 +243,8 @@ class KalmanFilterObserver(Observer):
     def __init__(self, *args, **kwargs):
         # Utility
         self.n = 15                     # Total dimension number
-        self.I3 = np.eye(3)             # 3x3 identity matrix
-        self.Z3 = np.zeros((3,3))       # 3x3 zero matrix
+        self.I3 = np.eye(3)
+        self.Z3 = np.zeros((3,3))
 
         # Load vessel data
         pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
@@ -255,11 +255,10 @@ class KalmanFilterObserver(Observer):
         self.M_inv = np.linalg.inv(M)
         self.damping = Dl
 
-        # Estimated(guessed) model parameters
+        # Estimated model parameters
         self.wave_wn = np.array([0.8, 0.8, 0.8])
         self.wave_zeta = np.array([0.1, 0.1, 0.1])
         self.bias_tau = np.array([300, 300, 300])
-        # Sigma 0.07 below w_0, 0.09 above w_0
         # Model and measurement noise
         self.q_wave_accel = np.array([0.02**2, 0.02**2, np.deg2rad(0.02)**2])
 
@@ -274,8 +273,8 @@ class KalmanFilterObserver(Observer):
                 self.q_force,
                 self.q_bias,
             ])
-        )   # Model noise matrix
-        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Measurement noise matrix
+        )   # Model uncertainty matrix
+        self.R = np.diag(SENSOR_ETA_STD[[0, 1, 5]] ** 2) # Measurement uncertainty matrix
 
         Cw = np.hstack([self.Z3, self.I3]) # Linear wave response
         self.H = np.hstack([Cw, self.I3, self.Z3, self.Z3])
@@ -306,9 +305,9 @@ class KalmanFilterObserver(Observer):
         eta0 = (
             np.zeros(6)
             if eta0 is None
-            else np.asarray(eta0, dtype=float).reshape(6)
+            else np.asarray(eta0)
         )
-        self.x = np.zeros((self.n, 1), dtype=float)
+        self.x = np.zeros((self.n, 1))
         self.x[6:9, 0] = [eta0[0], eta0[1], eta0[5]]
         self.P = self.P0.copy()
 
@@ -328,10 +327,6 @@ class KalmanFilterObserver(Observer):
         ))
 
     def step(self, t, dt, eta_measured, tau_est):
-        eta_measured = np.asarray(eta_measured, dtype=float).reshape(6)
-        tau_est = np.asarray(tau_est, dtype=float).reshape(6)
-        if dt <= 0.0:
-            raise ValueError("dt must be > 0")
         tau_body = tau_est[[0, 1, 5]]
 
         # System dynamics
@@ -353,14 +348,11 @@ class KalmanFilterObserver(Observer):
         # Prediction
         x_pred = self.x + dt * f        # First order Euler method with non-linear f
         x_pred[8, 0] = wrap_angle_pi(float(x_pred[8, 0])) # Wrap heading
-        P_pred = F @ self.P @ F.T + Q_d # Update predictor with linearized(dicretized) f
+        P_pred = F @ self.P @ F.T + Q_d # Update predictor with linearized f
 
         # Finding prediction error
-        y = np.array(
-            [eta_measured[0], eta_measured[1], eta_measured[5]],
-            dtype=float,
-        ).reshape(3, 1) # Measurements
-        z = y - self.H @ x_pred # Prediction error(Innovation), Wrong dimensions?
+        y = np.array([eta_measured[0], eta_measured[1], eta_measured[5]]).reshape(3, 1)
+        z = y - self.H @ x_pred # Prediction error
         z[2, 0] = wrap_angle_pi(float(z[2, 0]))
 
         S = self.H @ P_pred @ self.H.T + self.R
@@ -373,13 +365,13 @@ class KalmanFilterObserver(Observer):
         self.P = I_LH @ P_pred @ I_LH.T + L @ self.R @ L.T
 
         # Return final values
-        eta_est = np.zeros(6, dtype=float)
+        eta_est = np.zeros(6)
         eta_est[[0, 1, 5]] = self.x[6:9, 0]
 
-        nu_est = np.zeros(6, dtype=float)
+        nu_est = np.zeros(6)
         nu_est[[0, 1, 5]] = self.x[9:12, 0]
 
-        bias_est = np.zeros(6, dtype=float)
+        bias_est = np.zeros(6)
         bias_est[[0, 1, 5]] = self.x[12:15, 0]
         return ObserverEstimate(
             eta=eta_est,
