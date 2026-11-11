@@ -72,24 +72,23 @@ class NonlinearPassiveObserver(Observer):
 
 
     def __init__(self, *args, **kwargs):
-        #First, loading vessel data
+        #loading vessel data
         pkl = files("mcsimpy.vessel_data.gunnerus") / "parV_RVG3DOF.pkl"
         with open(str(pkl), "rb") as f:
             data = pickle.load(f)
 
 
-        #Defining identity matrix and zero matrix
         self.I3 = np.eye(3)
         self.Z3 = np.zeros((3,3))
         
-        #Defining states for the NPO
+        #Initialize observer states
         self.xi_hat = np.zeros(6)
         self.eta_hat = np.zeros(3)
         self.nu_hat = np.zeros(3)
         self.bias_hat = np.zeros(3)
 
 
-        #Tuneable parameters
+        #Observer tuning parameters
         self.T_b = np.diag([1000.0, 1000.0, 1000.0])
         self.T_b_inv = np.linalg.inv(self.T_b)
 
@@ -106,7 +105,7 @@ class NonlinearPassiveObserver(Observer):
         k7 = self.w_c
 
 
-        #Correction gains
+        #Correction gains matrices
         self.K1 = np.vstack([
             k1 * self.I3,
             k4 * self.I3
@@ -124,7 +123,8 @@ class NonlinearPassiveObserver(Observer):
             100000.0,
             10000000.0
         ])
-        
+
+        #Wave frequency motion model
         self.A_w = np.block([
         [self.Z3, self.I3],
         [(-(self.w_w**2)*self.I3), (-2*self.zeta_w*self.w_w)*self.I3]
@@ -133,6 +133,7 @@ class NonlinearPassiveObserver(Observer):
         self.E_w = np.vstack([self.Z3, self.I3])
         self.C_w = np.hstack([self.Z3, self.I3])
 
+        #Vessel mass and damping matrices
         M_RB, M_A, Dl = data["Mrb"], data["Ma"], data["Dl"]
         M = np.diag(np.diag(M_RB + M_A))
 
@@ -143,6 +144,7 @@ class NonlinearPassiveObserver(Observer):
 
 
     def passivity_matrices(self):
+        #Construct matrices for passivity analysis
         A_o = np.block([
             [self.A_w - self.K1 @ self.C_w, -self.K1, np.zeros((6,3))],
             [-self.K2 @ self.C_w, -self.K2, self.Z3],
@@ -166,6 +168,7 @@ class NonlinearPassiveObserver(Observer):
 
     @staticmethod
     def J(psi):
+        #Rotation from body fixed to earth fixed coordinates
         return np.array([
                 [np.cos(psi), -np.sin(psi), 0],
                 [np.sin(psi), np.cos(psi), 0],
@@ -186,7 +189,7 @@ class NonlinearPassiveObserver(Observer):
         self.bias_hat = np.zeros(3)
         
     def step(self, t, dt, eta_measured, tau_est):
-
+        #Measurement innovation 
         y_m = eta_measured[[0, 1, 5]]
         y_hat = self.eta_hat + self.C_w@self.xi_hat 
          
@@ -199,16 +202,19 @@ class NonlinearPassiveObserver(Observer):
 
         tau_3dof = tau_est[[0, 1, 5]]
 
-
+        #Wave frequency state estimation
         xi_dot_hat = self.A_w @ self.xi_hat + self.K1 @ y_tilde
 
+        #Low frequency position and heading estimation
         eta_dot_hat = J_hat @ self.nu_hat + self.K2 @ y_tilde
 
+        #Body fixed velocity estimation
         nu_dot_hat = self.M_inv @ (-self.D @ self.nu_hat + J_hat.T @ self.bias_hat + tau_3dof + J_hat.T @ self.K4 @ y_tilde)
-        
+
+        #Slowly varying environmental bias estimation
         bias_dot_hat = -self.T_b_inv@self.bias_hat + self.K3 @ y_tilde
 
-
+        #Forward Euler integration
         self.xi_hat += dt * xi_dot_hat
         self.eta_hat += dt * eta_dot_hat
         self.nu_hat += dt * nu_dot_hat
@@ -216,6 +222,7 @@ class NonlinearPassiveObserver(Observer):
 
         self.eta_hat[2] = wrap_angle_pi(self.eta_hat[2])
 
+        #Map 3-DOF estimates to 6-DOF output vectors
         eta_out = np.zeros(6)
         nu_out = np.zeros(6)
         bias_out = np.zeros(6)
