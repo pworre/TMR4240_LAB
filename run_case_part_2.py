@@ -327,9 +327,9 @@ def sim6():
 
 def sim7():
     """Part 2, Simulation 7 — your own showcase.  Design it, explain it, discuss it."""
-    # TODO (students): replace this with your own scenario.
-    cfg = Part2SimConfig(dt=DT, T=600.0, use_observer=True, observer_type=selected_observer())
-    logs = run(cfg, np.zeros(6), environment())
+    hold = 300.0
+    cfg = Part2SimConfig(dt=DT, T=5 * hold, use_observer=True, observer_type=selected_observer())
+    logs = run(cfg, four_corner_commands(cfg, hold), environment())
     standard_plots(logs, observer=True)
     return logs
 
